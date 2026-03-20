@@ -46,7 +46,14 @@ export function clearEnvCache() {
 
 export function getEnv(): Env {
   if (cachedEnv) return cachedEnv;
-  const parsed = EnvSchema.safeParse(process.env);
+
+  // Trim whitespace/newlines from all env values (Vercel CLI pipes can add trailing newlines)
+  const cleanedEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) cleanedEnv[key] = value.trim();
+  }
+
+  const parsed = EnvSchema.safeParse(cleanedEnv);
   if (!parsed.success) {
     const missing = parsed.error.issues
       .map((i) => i.path.join("."))
