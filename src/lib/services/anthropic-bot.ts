@@ -103,6 +103,14 @@ STRICT RULES FOR YOUR RESPONSE:
 ${analysisTexts.join("\n\n---\n\n")}`);
   }
 
+  systemParts.push(`--- FORMATTING ---
+You are responding in Slack. Use Slack mrkdwn formatting:
+- Bold: *text* (single asterisks, NOT double)
+- Italic: _text_
+- Lists: use bullet points with •
+- Do NOT use Markdown headers (# or ##). Use *Bold Text* instead.
+- Keep responses concise.`);
+
   const systemPrompt = systemParts.join("\n\n") || "You are a helpful crash analysis assistant.";
 
   // Build messages from conversation history

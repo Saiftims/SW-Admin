@@ -99,9 +99,14 @@ export async function POST(req: Request) {
       imageBuffers: imageBuffers.length > 0 ? imageBuffers : undefined,
     });
 
-    const postBody: any = { channel, text: response.text };
+    // Convert Markdown to Slack mrkdwn: **bold** → *bold*, # headers → *headers*
+    const slackText = response.text
+      .replace(/\*\*(.+?)\*\*/g, "*$1*")
+      .replace(/^#{1,3}\s+(.+)$/gm, "*$1*")
+      .replace(/^- /gm, "• ");
+
+    const postBody: any = { channel, text: slackText };
     if (response.slackBlocks && response.slackBlocks.length > 0) {
-      // Use Block Kit only — don't duplicate data with Claude's text
       postBody.blocks = response.slackBlocks;
     }
 
