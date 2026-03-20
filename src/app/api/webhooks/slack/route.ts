@@ -40,8 +40,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Ignore bot messages and message_changed/deleted events
-  if (event.bot_id || event.subtype) {
+  // Ignore bot messages and non-user subtypes (but allow file_share)
+  if (event.bot_id || event.subtype === "bot_message" || event.subtype === "message_changed" || event.subtype === "message_deleted") {
     return NextResponse.json({ ok: true });
   }
 
