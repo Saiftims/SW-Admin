@@ -54,8 +54,9 @@ export async function POST(req: Request) {
 
   if (config.signingSecretEncrypted && slackSignature) {
     const sigBasestring = `v0:${timestamp}:${rawBody}`;
+    const signingSecret = config.signingSecretEncrypted.trim();
     const mySignature = "v0=" + crypto
-      .createHmac("sha256", config.signingSecretEncrypted)
+      .createHmac("sha256", signingSecret)
       .update(sigBasestring)
       .digest("hex");
 
@@ -64,8 +65,9 @@ export async function POST(req: Request) {
     const slackBuf = Buffer.from(slackSignature);
 
     if (sigBuf.length !== slackBuf.length || !crypto.timingSafeEqual(sigBuf, slackBuf)) {
-      console.error(`[Slack Webhook] Signature mismatch. Expected length: ${sigBuf.length}, got: ${slackBuf.length}`);
-      console.error(`[Slack Webhook] My sig: ${mySignature.slice(0, 20)}... Slack sig: ${slackSignature.slice(0, 20)}...`);
+      console.error(`[Slack Webhook] Sig mismatch. Secret used (first 4): ${signingSecret.slice(0, 4)}, len: ${signingSecret.length}`);
+      console.error(`[Slack Webhook] Computed: ${mySignature.slice(0, 30)}...`);
+      console.error(`[Slack Webhook] Received: ${slackSignature.slice(0, 30)}...`);
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
   }
