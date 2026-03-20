@@ -4,14 +4,10 @@ import { handleSlackMessage } from "@/lib/services/anthropic-bot";
 
 export const maxDuration = 60;
 
-// In-memory dedupe cache (cleared on cold start, which is fine for serverless)
-const processedEvents = new Set<string>();
-
 export async function POST(req: Request) {
   const rawBody = await req.text();
   const body = JSON.parse(rawBody);
 
-  // Handle Slack URL verification challenge
   if (body.type === "url_verification") {
     return NextResponse.json({ challenge: body.challenge });
   }
@@ -20,35 +16,46 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Deduplicate: Slack retries events if we don't respond within 3s
-  const eventId = body.event_id;
-  if (eventId && processedEvents.has(eventId)) {
-    console.log(`[Slack] Duplicate event ${eventId}, skipping`);
-    return NextResponse.json({ ok: true });
-  }
-  if (eventId) {
-    processedEvents.add(eventId);
-    // Keep cache bounded
-    if (processedEvents.size > 500) {
-      const first = processedEvents.values().next().value;
-      if (first) processedEvents.delete(first);
-    }
-  }
-
   const event = body.event;
   if (!event || event.type !== "message") {
     return NextResponse.json({ ok: true });
   }
 
-  // Ignore bot messages and non-user subtypes (but allow file_share)
-  if (event.bot_id || event.subtype === "bot_message" || event.subtype === "message_changed" || event.subtype === "message_deleted") {
+  // Ignore ALL non-user messages
+  if (event.bot_id) return NextResponse.json({ ok: true });
+  // Only process: no subtype (plain message) or file_share
+  if (event.subtype && event.subtype !== "file_share") {
     return NextResponse.json({ ok: true });
   }
 
   const teamId = body.team_id;
   const channel = event.channel;
+  const messageTs = event.ts ?? event.event_ts;
 
-  // Find tenant config
+  // DB-based deduplication using message timestamp (works across serverless instances)
+  const dedupeKey = `slack:${channel}:${messageTs}`;
+  try {
+    const existing = await prisma.jobEventHistory.findFirst({
+      where: { correlationId: dedupeKey },
+    });
+    if (existing) {
+      console.log(`[Slack] Duplicate ${dedupeKey}, skipping`);
+      return NextResponse.json({ ok: true });
+    }
+    await prisma.jobEventHistory.create({
+      data: {
+        correlationId: dedupeKey,
+        entityType: "slack_message",
+        eventType: "WEBHOOK_RECEIVED",
+        detailsJson: { user: event.user, files: (event.files ?? []).length },
+      },
+    });
+  } catch {
+    // If insert fails due to race condition, skip
+    console.log(`[Slack] Dedupe race on ${dedupeKey}, skipping`);
+    return NextResponse.json({ ok: true });
+  }
+
   const config = await prisma.slackConfig.findFirst({
     where: { workspaceId: teamId },
   }) ?? await prisma.slackConfig.findFirst();
@@ -63,9 +70,9 @@ export async function POST(req: Request) {
   const userMessage = event.text ?? "";
   const files = event.files ?? [];
 
-  console.log(`[Slack] Message from ${event.user}: "${userMessage.slice(0, 50)}" (${files.length} files)`);
+  console.log(`[Slack] Processing: "${userMessage.slice(0, 50)}" (${files.length} files) [${dedupeKey}]`);
 
-  // Download image attachments
+  // Download images
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (const file of files) {
     if (!file.mimetype?.startsWith("image/")) continue;
@@ -84,7 +91,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // Process and respond
   try {
     const response = await handleSlackMessage({
       tenantId,
@@ -94,7 +100,6 @@ export async function POST(req: Request) {
     });
 
     const postBody: any = { channel, text: response.text };
-
     if (response.slackBlocks && response.slackBlocks.length > 0) {
       postBody.blocks = [
         ...response.slackBlocks,
