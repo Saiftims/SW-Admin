@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GlobalRole {
+  SUPER_ADMIN
+  OPS_ADMIN
+  SUPPORT_READONLY
+}
+
+enum TenantOnboardingStatus {
+  PENDING
+  ACTIVE
+  REQUIRES_ACTION
+  SUSPENDED
+}
+
+enum BotProvisioningState {
+  NOT_STARTED
+  PROVISIONING
+  CONFIGURING
+  DEPLOYING
+  LIVE
+  DEGRADED
+  FAILED
+}
+
+enum IntegrationHealth {
+  UNKNOWN
+  HEALTHY
+  WARNING
+  ERROR
+}
+
+enum InboundSourceType {
+  SLACK
+  EMAIL
+}
+
+enum AssetType {
+  CRASH_IMAGE
+}
+
+enum AnalysisJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+  RATE_LIMITED
+}
+
+enum OutboundChannelType {
+  SLACK
+  EMAIL
+}
+
+enum ImageAnalysisStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum EmailTemplateVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum JobEventType {
+  JOB_QUEUED
+  JOB_STARTED
+  JOB_SUCCEEDED
+  JOB_FAILED
+  WEBHOOK_RECEIVED
+  WEBHOOK_VERIFIED
+  WEBHOOK_REJECTED
+  ATTACHMENT_STORED
+  ANALYSIS_REQUESTED
+  ANALYSIS_NORMALIZED
+  MESSAGE_RENDERED
+  OUTBOUND_SENT
+}
+
+model Tenant {
+  id                         String                       @id @default(uuid())
+  name                       String
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  onboardingStatus           TenantOnboardingStatus       @default(PENDING)
+  defaultAnalysisStrategy   String                       @default("analyze_all_and_aggregate")
+
+  firm                        Firm?
+  subscriptions              Subscription[]
+  tenantMembers              TenantMember[]
+  clawdbotInstance            ClawdbotInstance?
+  memoryDocument              MemoryDocument?
+  slackConfigs               SlackConfig[]
+  emailConfigs               EmailConfig[]
+  inboundMessages            InboundMessage[]
+  analysisJobs               AnalysisJob[]
+  outboundResponses          OutboundResponse[]
+  emailTemplates             EmailTemplate[]
+  uploadedAssets             UploadedAsset[]
+  twilioConfig               TwilioConfig?
+
+  auditLogs                   AuditLog[]
+  jobEventHistory             JobEventHistory[]
+
+  @@index([onboardingStatus])
+}
+
+model User {
+  id            String                     @id @default(uuid())
+  email         String                     @unique
+  passwordHash String
+  globalRole    GlobalRole                @default(OPS_ADMIN)
+  createdAt     DateTime                   @default(now())
+
+  tenantMembers TenantMember[]
+  auditLogs     AuditLog[]
+  jobEventHistory JobEventHistory[]
+  memoryDocumentVersions MemoryDocumentVersion[]
+  emailTemplateVersions EmailTemplateVersion[]
+
+  @@index([globalRole])
+}
+
+model TenantMember {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  role      GlobalRole @default(OPS_ADMIN)
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([role])
+}
+
+model Firm {
+  id             String   @id @default(uuid())
+  tenantId       String   @unique
+  counselorType  String
+  lawFirmName    String
+  billingEmail   String
+  phoneNumber    String
+
+  streetAddress  String
+  city            String
+  state           String
+  zipCode         String
+  country         String
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id          String   @id @default(uuid())
+  tenantId    String
+  plan        String
+  billingEmail String
+  status      String   @default("trial")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+}
+
+model ClawdbotInstance {
+  id                     String             @id @default(uuid())
+  tenantId               String             @unique
+  externalInstanceId    String?
+  provisioningState      BotProvisioningState @default(NOT_STARTED)
+  errorMessage          String?
+  lastStateChangeAt     DateTime           @default(now())
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([provisioningState])
+}
+
+model MemoryDocument {
+  id              String   @id @default(uuid())
+  tenantId        String   @unique
+  currentVersionId String? @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currentVersion MemoryDocumentVersion? @relation("CurrentMemoryVersion", fields: [currentVersionId], references: [id])
+
+  versions MemoryDocumentVersion[]
+}
+
+model MemoryDocumentVersion {
+  id                String   @id @default(uuid())
+  memoryDocumentId String
+  versionNumber     Int
+  contentMarkdown   String
+  sourceProvenance  Json?
+  createdByUserId   String?
+  createdAt         DateTime @default(now())
+
+  tenantId String
+  memoryDocument MemoryDocument @relation(fields: [memoryDocumentId], references: [id], onDelete: Cascade)
+  creator User? @relation(fields: [createdByUserId], references: [id])
+  currentFor MemoryDocument? @relation("CurrentMemoryVersion")
+
+  @@index([tenantId, versionNumber])
+  @@unique([memoryDocumentId, versionNumber])
+
+  @@map("memory_document_versions")
+}
+
+model SlackConfig {
+  id                      String   @id @default(uuid())
+  tenantId                String   @unique
+  workspaceId            String?
+  channelId              String?
+  botUserId              String?
+  signingSecretEncrypted String
+  botTokenEncrypted      String
+  appTokenEncrypted      String?
+  verificationStatus     IntegrationHealth @default(UNKNOWN)
+  errorMessage           String?
+  lastVerifiedAt         DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, verificationStatus])
+}
+
+model EmailConfig {
+  id            String   @id @default(uuid())
+  tenantId      String
+  enabled       Boolean  @default(false)
+  inboundRouteKey String? // provider-specific routing identifier
+  // For provider settings, keep non-secret parts in Json; secrets remain encrypted columns in v2.
+  settingsJson  Json?
+  verificationStatus IntegrationHealth @default(UNKNOWN)
+  lastVerifiedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, enabled, verificationStatus])
+}
+
+model InboundMessage {
+  id             String           @id @default(uuid())
+  tenantId       String
+  sourceType     InboundSourceType
+  externalSourceId String
+  threadRef      String?
+  receivedAt     DateTime         @default(now())
+  status         String           @default("RECEIVED")
+  dedupeHash     String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedAssets UploadedAsset[]
+  analysisJobs   AnalysisJob[]
+  outboundResponses OutboundResponse[]
+
+  @@unique([tenantId, dedupeHash])
+  @@index([tenantId, receivedAt])
+}
+
+model UploadedAsset {
+  id              String    @id @default(uuid())
+  tenantId        String
+  inboundMessageId String
+  assetType       AssetType
+
+  storageBucket  String
+  storageKey     String
+
+  originalFilename String?
+  mimeType        String?
+  sizeBytes       BigInt?
+  sha256          String?
+  createdAt       DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inboundMessage InboundMessage @relation(fields: [inboundMessageId], references: [id], onDelete: Cascade)
+  perImageResults PerImageAnalysisResult[]
+
+  @@index([tenantId, assetType])
+  @@index([inboundMessageId])
+}
+
+model AnalysisJob {
+  id               String   @id @default(uuid())
+  tenantId         String
+  inboundMessageId String
+  strategy         String  @default("analyze_all_and_aggregate")
+  status           AnalysisJobStatus @default(QUEUED)
+
+  providerBaseUrl  String?
+  dedupeKey        String?  @unique
+
+  errorCode        String?
+  errorMessage     String?
+
+  createdAt        DateTime @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inboundMessage InboundMessage @relation(fields: [inboundMessageId], references: [id], onDelete: Cascade)
+  perImageResults PerImageAnalysisResult[]
+  aggregatedSummary AggregatedCaseSummary?
+
+  @@index([tenantId, status, createdAt])
+}
+
+model PerImageAnalysisResult {
+  id              String   @id @default(uuid())
+  analysisJobId  String
+  uploadedAssetId String
+  status          ImageAnalysisStatus @default(QUEUED)
+  confidence      String?
+  normalizedResult Json?
+
+  errorCode       String?
+  errorMessage    String?
+
+  createdAt       DateTime @default(now())
+
+  analysisJob AnalysisJob @relation(fields: [analysisJobId], references: [id], onDelete: Cascade)
+  uploadedAsset UploadedAsset @relation(fields: [uploadedAssetId], references: [id], onDelete: Cascade)
+
+  @@index([analysisJobId, uploadedAssetId])
+}
+
+model AggregatedCaseSummary {
+  id               String  @id @default(uuid())
+  analysisJobId   String  @unique
+  summaryJson     Json?
+  provenanceJson  Json?
+  createdAt       DateTime @default(now())
+
+  analysisJob AnalysisJob @relation(fields: [analysisJobId], references: [id], onDelete: Cascade)
+}
+
+model OutboundResponse {
+  id               String   @id @default(uuid())
+  tenantId         String
+  inboundMessageId String
+  channelType      OutboundChannelType
+  recipientRef     String?
+  status           String   @default("QUEUED")
+
+  renderedSubject  String?
+  renderedHtmlPreview String?
+  providerMessageId String?
+  errorMessage     String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inboundMessage InboundMessage @relation(fields: [inboundMessageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, channelType, status, createdAt])
+}
+
+model EmailTemplate {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  versions  EmailTemplateVersion[]
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+}
+
+model EmailTemplateVersion {
+  id            String  @id @default(uuid())
+  templateId    String
+  versionNumber Int
+
+  status        EmailTemplateVersionStatus @default(DRAFT)
+  htmlBody      String
+  cssStyles     String?
+  placeholdersDetected Json?
+
+  createdByUserId String?
+  createdAt     DateTime @default(now())
+
+  template EmailTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  creator User? @relation(fields: [createdByUserId], references: [id])
+
+  @@index([templateId, status, versionNumber])
+  @@unique([templateId, versionNumber])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  tenantId     String?
+  actorUserId  String?
+  eventType    String
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor  User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([eventType])
+}
+
+model JobEventHistory {
+  id           String   @id @default(uuid())
+  tenantId     String?
+  actorUserId  String?
+  correlationId String?
+  entityType   String
+  entityId     String?
+  eventType    JobEventType
+  detailsJson  Json?
+  createdAt     DateTime @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor  User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([tenantId, createdAt])
+  @@index([correlationId])
+}
+
+model TwilioConfig {
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  accountSid        String
+  authToken         String
+  phoneNumber       String
+  verificationStatus IntegrationHealth @default(UNKNOWN)
+  errorMessage      String?
+  lastVerifiedAt    DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([phoneNumber])
+}
+
+model AnalysisReport {
+  id            String   @id @default(uuid())
+  sourceType    String
+  sourceRef     String?
+  senderPhone   String?
+  senderEmail   String?
+  resultJson    Json
+  placeholders  Json?
+  renderedHtml  String?
+  createdAt     DateTime @default(now())
+
+  @@index([sourceType, createdAt])
+}
+
