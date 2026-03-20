@@ -89,6 +89,7 @@ export async function POST(req: Request) {
     const response = await handleSlackMessage({
       tenantId,
       userMessage,
+      channel: `slack:${channel}`,
       imageBuffers: imageBuffers.length > 0 ? imageBuffers : undefined,
     });
 

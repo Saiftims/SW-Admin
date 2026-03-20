@@ -16,30 +16,30 @@ function getClient(): Anthropic {
   return client;
 }
 
-async function getMemoryContent(tenantId: string): Promise<string> {
-  const doc = await prisma.memoryDocument.findUnique({
-    where: { tenantId },
-    include: {
-      currentVersion: true,
-    },
-  });
+async function getTenantContext(tenantId: string) {
+  const [tenant, memDoc, recentMessages] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: tenantId },
+      include: { firm: true },
+    }),
+    prisma.memoryDocument.findUnique({
+      where: { tenantId },
+      include: { currentVersion: true },
+    }),
+    prisma.conversationMessage.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+  ]);
 
-  return doc?.currentVersion?.contentMarkdown ?? DEFAULT_MEMORY;
+  return {
+    personality: tenant?.personality ?? "",
+    memory: memDoc?.currentVersion?.contentMarkdown ?? "",
+    firm: tenant?.firm,
+    recentMessages: recentMessages.reverse(),
+  };
 }
-
-const DEFAULT_MEMORY = `# Silent Witness Bot
-
-You are the Silent Witness assistant. Silent Witness helps personal injury lawyers analyze car crash photographs and accident evidence.
-
-When a user sends crash photos, you analyze them using the Silent Witness Delta-V analysis API. You explain results in a professional, legally-friendly way that PI attorneys can use.
-
-Key concepts:
-- **Delta-V (mph)**: Change in vehicle velocity during collision. Higher = more severe.
-- **PDOF**: Principal Direction of Force — where the impact came from.
-- **G-force**: Peak acceleration in multiples of gravity.
-- **AIS (Abbreviated Injury Scale)**: Population-based injury severity probabilities (0=none to 6=fatal).
-
-Always be professional, clear, and helpful. Never make definitive medical diagnoses. Present data as evidence-based analysis.`;
 
 export type BotResponse = {
   text: string;
@@ -50,13 +50,13 @@ export type BotResponse = {
 export async function handleSlackMessage(params: {
   tenantId: string;
   userMessage: string;
+  channel?: string;
   imageBuffers?: { buffer: Buffer; mimeType: string; filename: string }[];
-  conversationHistory?: { role: "user" | "assistant"; content: string }[];
 }): Promise<BotResponse> {
-  const { tenantId, userMessage, imageBuffers, conversationHistory } = params;
-  const memory = await getMemoryContent(tenantId);
+  const { tenantId, userMessage, channel, imageBuffers } = params;
+  const ctx = await getTenantContext(tenantId);
 
-  // If there are images, run Silent Witness analysis first
+  // Run Silent Witness analysis if images present
   const analysisResults: NormalizedAnalysisResult[] = [];
   const analysisTexts: string[] = [];
 
@@ -73,11 +73,24 @@ export async function handleSlackMessage(params: {
     }
   }
 
-  // Build messages for Claude
-  const systemPrompt = [
-    memory,
-    analysisTexts.length > 0
-      ? `\n\n--- ANALYSIS RESULTS FROM SILENT WITNESS API ---\nThe following crash photo analysis results were just produced. Present them clearly to the user.
+  // Build system prompt from personality + memory + firm context
+  const systemParts: string[] = [];
+
+  if (ctx.personality) {
+    systemParts.push(`--- BOT PERSONALITY ---\n${ctx.personality}`);
+  }
+
+  if (ctx.memory) {
+    systemParts.push(`--- KNOWLEDGE BASE ---\n${ctx.memory}`);
+  }
+
+  if (ctx.firm) {
+    systemParts.push(`--- FIRM CONTEXT ---\nYou represent: ${ctx.firm.lawFirmName}\nType: ${ctx.firm.counselorType}\nContact: ${ctx.firm.billingEmail} · ${ctx.firm.phoneNumber}\nLocation: ${ctx.firm.city}, ${ctx.firm.state}`);
+  }
+
+  if (analysisTexts.length > 0) {
+    systemParts.push(`--- ANALYSIS RESULTS FROM SILENT WITNESS API ---
+The following crash photo analysis results were just produced. Present them clearly to the user.
 
 STRICT RULES FOR YOUR RESPONSE:
 - Present ONLY the data and numbers from the analysis. Be concise.
@@ -87,16 +100,16 @@ STRICT RULES FOR YOUR RESPONSE:
 - Do NOT add any interpretive commentary about what the numbers "mean" legally.
 - Keep it short: summarize the data, explain the physics briefly, and stop.
 
-${analysisTexts.join("\n\n---\n\n")}`
-      : "",
-  ].join("");
+${analysisTexts.join("\n\n---\n\n")}`);
+  }
 
+  const systemPrompt = systemParts.join("\n\n") || "You are a helpful crash analysis assistant.";
+
+  // Build messages from conversation history
   const messages: Anthropic.MessageParam[] = [];
 
-  // Add conversation history (last 10 turns max)
-  if (conversationHistory && conversationHistory.length > 0) {
-    const recent = conversationHistory.slice(-10);
-    for (const msg of recent) {
+  for (const msg of ctx.recentMessages) {
+    if (msg.role === "user" || msg.role === "assistant") {
       messages.push({ role: msg.role, content: msg.content });
     }
   }
@@ -122,7 +135,7 @@ ${analysisTexts.join("\n\n---\n\n")}`
   messages.push({ role: "user", content: userContent });
 
   try {
-    console.log(`[Anthropic] Sending request — images: ${imageBuffers?.length ?? 0}, text length: ${userMessage.length}, system length: ${systemPrompt.length}`);
+    console.log(`[Anthropic] Sending request — images: ${imageBuffers?.length ?? 0}, history: ${ctx.recentMessages.length}, personality: ${ctx.personality ? "yes" : "no"}`);
 
     const response = await getClient().messages.create({
       model: "claude-sonnet-4-20250514",
@@ -138,7 +151,30 @@ ${analysisTexts.join("\n\n---\n\n")}`
 
     console.log(`[Anthropic] Response received — ${text.length} chars`);
 
-    // Build Block Kit blocks if we have analysis results
+    // Store conversation in DB
+    const channelId = channel ?? "default";
+    try {
+      await prisma.conversationMessage.createMany({
+        data: [
+          {
+            tenantId,
+            channel: channelId,
+            role: "user",
+            content: userMessage || "(sent images)",
+            hasImages: (imageBuffers?.length ?? 0) > 0,
+          },
+          {
+            tenantId,
+            channel: channelId,
+            role: "assistant",
+            content: text,
+          },
+        ],
+      });
+    } catch (dbErr) {
+      console.error("[Anthropic] Failed to store conversation:", dbErr);
+    }
+
     const slackBlocks = analysisResults.length > 0
       ? buildSlackBlocks(analysisResults[0])
       : undefined;

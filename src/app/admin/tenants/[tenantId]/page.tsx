@@ -242,12 +242,31 @@ export default function TenantDetailPage({ params }: { params: Promise<{ tenantI
             <FirmEditor tenantId={tenantId} firm={tenant.firm} onSaved={(updated) => setTenant({ ...tenant, firm: updated, name: updated.lawFirmName })} />
           ) : null}
 
+          {/* Bot config */}
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr", marginBottom: 12 }}>
+            <Link href={`/admin/tenants/${tenantId}/personality`} className="card" style={{ textDecoration: "none" }}>
+              <div style={{ fontWeight: 750, marginBottom: 6 }}>🎭 Bot Personality</div>
+              <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
+                Define the bot's tone, style, and behavior. Applied to every Slack, SMS, and email response.
+              </div>
+              <div style={{ marginTop: 10, color: "var(--brand)", fontSize: 13 }}>Edit personality →</div>
+            </Link>
+
+            <Link href={`/admin/tenants/${tenantId}/memory`} className="card" style={{ textDecoration: "none" }}>
+              <div style={{ fontWeight: 750, marginBottom: 6 }}>🧠 Bot Memory</div>
+              <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
+                Knowledge base, conversation history, and firm context. The bot remembers past interactions.
+              </div>
+              <div style={{ marginTop: 10, color: "var(--brand)", fontSize: 13 }}>View memory →</div>
+            </Link>
+          </div>
+
           {/* Integration links */}
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
             <Link href={`/admin/tenants/${tenantId}/slack`} className="card" style={{ textDecoration: "none" }}>
               <div style={{ fontWeight: 750, marginBottom: 6 }}>Slack Integration</div>
               <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
-                Configure Slack bot credentials and Socket Mode connection.
+                Configure Slack bot credentials and webhook connection.
               </div>
               <div style={{ marginTop: 10, color: "var(--brand)", fontSize: 13 }}>Configure →</div>
             </Link>
