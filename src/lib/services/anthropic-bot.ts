@@ -77,7 +77,17 @@ export async function handleSlackMessage(params: {
   const systemPrompt = [
     memory,
     analysisTexts.length > 0
-      ? `\n\n--- ANALYSIS RESULTS FROM SILENT WITNESS API ---\nThe following crash photo analysis results were just produced. Present them clearly to the user.\n\n${analysisTexts.join("\n\n---\n\n")}`
+      ? `\n\n--- ANALYSIS RESULTS FROM SILENT WITNESS API ---\nThe following crash photo analysis results were just produced. Present them clearly to the user.
+
+STRICT RULES FOR YOUR RESPONSE:
+- Present ONLY the data and numbers from the analysis. Be concise.
+- Do NOT add legal disclaimers or warnings — the data already includes its own disclaimer.
+- Do NOT add "Key Observations", "Legal Considerations", or "Recommended Next Steps" sections.
+- Do NOT suggest medical evaluation, expert review, or EDR data.
+- Do NOT add any interpretive commentary about what the numbers "mean" legally.
+- Keep it short: summarize the data, explain the physics briefly, and stop.
+
+${analysisTexts.join("\n\n---\n\n")}`
       : "",
   ].join("");
 
