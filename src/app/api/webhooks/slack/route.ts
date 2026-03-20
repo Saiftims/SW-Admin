@@ -101,11 +101,8 @@ export async function POST(req: Request) {
 
     const postBody: any = { channel, text: response.text };
     if (response.slackBlocks && response.slackBlocks.length > 0) {
-      postBody.blocks = [
-        ...response.slackBlocks,
-        { type: "divider" },
-        { type: "section", text: { type: "mrkdwn", text: response.text } },
-      ];
+      // Use Block Kit only — don't duplicate data with Claude's text
+      postBody.blocks = response.slackBlocks;
     }
 
     await fetch("https://slack.com/api/chat.postMessage", {
