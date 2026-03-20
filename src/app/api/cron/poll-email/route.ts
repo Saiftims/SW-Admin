@@ -12,6 +12,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Disabled until fresh Gmail account is configured
+  const gmailUser = process.env.GMAIL_USER?.trim();
+  const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim();
+  if (!gmailUser || !gmailPass || gmailPass === "xxxx-xxxx-xxxx-xxxx") {
+    return NextResponse.json({ ok: true, skipped: true, reason: "Gmail not configured" });
+  }
+
   try {
     const processed = await pollAndProcessEmails();
     console.log(`[Cron] Email poll complete — processed ${processed} email(s).`);
