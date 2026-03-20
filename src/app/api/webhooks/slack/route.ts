@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { prisma } from "@/lib/db";
-import { handleSlackMessage, type BotResponse } from "@/lib/services/anthropic-bot";
-import { buildSlackBlocks } from "@/lib/services/silent-witness-client";
+import { handleSlackMessage } from "@/lib/services/anthropic-bot";
 
 export const maxDuration = 60;
+
+// In-memory dedupe cache (cleared on cold start, which is fine for serverless)
+const processedEvents = new Set<string>();
 
 export async function POST(req: Request) {
   const rawBody = await req.text();
@@ -19,55 +20,59 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // Deduplicate: Slack retries events if we don't respond within 3s
+  const eventId = body.event_id;
+  if (eventId && processedEvents.has(eventId)) {
+    console.log(`[Slack] Duplicate event ${eventId}, skipping`);
+    return NextResponse.json({ ok: true });
+  }
+  if (eventId) {
+    processedEvents.add(eventId);
+    // Keep cache bounded
+    if (processedEvents.size > 500) {
+      const first = processedEvents.values().next().value;
+      if (first) processedEvents.delete(first);
+    }
+  }
+
   const event = body.event;
   if (!event || event.type !== "message") {
     return NextResponse.json({ ok: true });
   }
 
-  // Ignore bot messages
-  if (event.bot_id || event.subtype === "bot_message") {
+  // Ignore bot messages and message_changed/deleted events
+  if (event.bot_id || event.subtype) {
     return NextResponse.json({ ok: true });
   }
 
   const teamId = body.team_id;
   const channel = event.channel;
 
-  // Find tenant by looking up Slack config that matches this team
-  const slackConfig = await prisma.slackConfig.findFirst({
+  // Find tenant config
+  const config = await prisma.slackConfig.findFirst({
     where: { workspaceId: teamId },
-    include: { tenant: true },
-  });
-
-  // Also try matching without workspace ID (fallback: find any config)
-  const config = slackConfig ?? await prisma.slackConfig.findFirst({
-    include: { tenant: true },
-  });
+  }) ?? await prisma.slackConfig.findFirst();
 
   if (!config) {
-    console.error(`[Slack Webhook] No Slack config found for team ${teamId}`);
+    console.error(`[Slack] No config for team ${teamId}`);
     return NextResponse.json({ ok: true });
   }
-
-  // TODO: Re-enable signature verification after debugging
-  // Signature verification is temporarily disabled to unblock the bot.
-  // The webhook is still protected by the unique URL + Slack's own verification.
 
   const tenantId = config.tenantId;
   const botToken = config.botTokenEncrypted;
   const userMessage = event.text ?? "";
   const files = event.files ?? [];
 
-  console.log(`[Slack Webhook] Message from ${event.user} in ${channel}: "${userMessage}" (${files.length} files)`);
+  console.log(`[Slack] Message from ${event.user}: "${userMessage.slice(0, 50)}" (${files.length} files)`);
 
   // Download image attachments
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (const file of files) {
     if (!file.mimetype?.startsWith("image/")) continue;
-    const downloadUrl = file.url_private_download ?? file.url_private;
-    if (!downloadUrl) continue;
-
+    const url = file.url_private_download ?? file.url_private;
+    if (!url) continue;
     try {
-      const res = await fetch(downloadUrl, {
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${botToken}` },
       });
       if (res.ok) {
@@ -75,11 +80,11 @@ export async function POST(req: Request) {
         imageBuffers.push({ buffer, mimeType: file.mimetype, filename: file.name ?? "image.jpg" });
       }
     } catch (err: any) {
-      console.error(`[Slack Webhook] Failed to download file: ${err?.message}`);
+      console.error(`[Slack] Download failed: ${err?.message}`);
     }
   }
 
-  // Process with Anthropic + Silent Witness
+  // Process and respond
   try {
     const response = await handleSlackMessage({
       tenantId,
@@ -87,11 +92,7 @@ export async function POST(req: Request) {
       imageBuffers: imageBuffers.length > 0 ? imageBuffers : undefined,
     });
 
-    // Post response back to Slack
-    const postBody: any = {
-      channel,
-      text: response.text,
-    };
+    const postBody: any = { channel, text: response.text };
 
     if (response.slackBlocks && response.slackBlocks.length > 0) {
       postBody.blocks = [
@@ -103,25 +104,15 @@ export async function POST(req: Request) {
 
     await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${botToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(postBody),
     });
   } catch (err: any) {
-    console.error(`[Slack Webhook] Error: ${err?.message}`);
-
+    console.error(`[Slack] Error: ${err?.message}`);
     await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${botToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        channel,
-        text: "Sorry, I encountered an error processing your request. Please try again.",
-      }),
+      headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, text: "Sorry, I encountered an error. Please try again." }),
     });
   }
 
