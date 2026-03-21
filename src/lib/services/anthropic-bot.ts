@@ -159,8 +159,17 @@ You are responding in Slack. Use Slack mrkdwn formatting:
 
     console.log(`[Anthropic] Response received — ${text.length} chars`);
 
-    // Store conversation in DB
+    // Store conversation in DB — include analysis data so bot can recall it
     const channelId = channel ?? "default";
+    const userContent = imageBuffers && imageBuffers.length > 0
+      ? `${userMessage || "(sent crash photos)"}\n\n[User uploaded ${imageBuffers.length} crash photo(s) for analysis]`
+      : userMessage;
+
+    // Include the raw analysis data in the stored assistant message so it's in memory
+    const assistantContent = analysisTexts.length > 0
+      ? `[ANALYSIS RESULTS]\n${analysisTexts.join("\n---\n")}\n\n[BOT RESPONSE]\n${text}`
+      : text;
+
     try {
       await prisma.conversationMessage.createMany({
         data: [
@@ -168,14 +177,14 @@ You are responding in Slack. Use Slack mrkdwn formatting:
             tenantId,
             channel: channelId,
             role: "user",
-            content: userMessage || "(sent images)",
+            content: userContent,
             hasImages: (imageBuffers?.length ?? 0) > 0,
           },
           {
             tenantId,
             channel: channelId,
             role: "assistant",
-            content: text,
+            content: assistantContent,
           },
         ],
       });
