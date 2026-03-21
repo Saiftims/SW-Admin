@@ -3,14 +3,9 @@ import { getEnv } from "@/lib/env";
 import { prisma } from "@/lib/db";
 import { analyzeImages, buildTemplatePlaceholders, type NormalizedAnalysisResult } from "@/lib/services/silent-witness-client";
 import { renderTemplate, getDefaultTemplate } from "@/lib/services/email-template";
+import { handleSlackMessage } from "@/lib/services/anthropic-bot";
 
 export const maxDuration = 60;
-
-// WhatsApp sends each photo as a separate message. We batch them by waiting
-// for a quiet period before processing. Strategy:
-// 1. When a photo arrives, store it in DB as a pending asset
-// 2. Wait 8 seconds for more photos from the same sender
-// 3. After the wait, collect all pending photos and analyze together
 
 const BATCH_WINDOW_MS = 8000;
 
@@ -31,7 +26,6 @@ export async function POST(req: Request) {
       where: { correlationId: `wa:${messageSid}` },
     });
     if (existing) {
-      console.log(`[WhatsApp] Duplicate SID ${messageSid}, skipping`);
       return emptyResponse();
     }
     await prisma.jobEventHistory.create({
@@ -44,13 +38,43 @@ export async function POST(req: Request) {
     }).catch(() => {});
   }
 
-  if (numMedia === 0) {
-    return twimlResponse("Welcome to Silent Witness.\n\nSend crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust send one or more photos of vehicle damage.");
-  }
+  // Find tenant (use first available for now)
+  const tenant = await prisma.tenant.findFirst({
+    include: { firm: true },
+  });
+  const tenantId = tenant?.id ?? "";
 
   const env = getEnv();
 
-  // Download images from this message
+  // ─── Text-only message: conversational AI ─────────────────────────
+  if (numMedia === 0) {
+    if (!body.trim()) {
+      return twimlResponse("Welcome to Silent Witness.\n\nSend crash photos for Delta-V analysis, or ask questions about your case.");
+    }
+
+    try {
+      const response = await handleSlackMessage({
+        tenantId,
+        userMessage: body,
+        channel: `whatsapp:${from}`,
+      });
+
+      // Convert markdown bold to WhatsApp bold
+      const waText = response.text
+        .replace(/\*\*(.+?)\*\*/g, "*$1*")
+        .replace(/^#{1,3}\s+(.+)$/gm, "*$1*")
+        .replace(/^- /gm, "• ");
+
+      return twimlResponse(waText);
+    } catch (err: any) {
+      console.error(`[WhatsApp] AI error: ${err?.message}`);
+      return twimlResponse("Sorry, I encountered an error. Please try again.");
+    }
+  }
+
+  // ─── Photo message: batch + analyze ───────────────────────────────
+
+  // Download images
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (let i = 0; i < numMedia; i++) {
     const mediaUrl = params.get(`MediaUrl${i}`);
@@ -76,7 +100,7 @@ export async function POST(req: Request) {
     return twimlResponse("I couldn't read those attachments. Please send JPEG, PNG, or WebP crash photos.");
   }
 
-  // Store images as pending batch entries
+  // Store images in batch
   const batchKey = `wa-batch:${from}`;
   for (const img of imageBuffers) {
     await prisma.jobEventHistory.create({
@@ -94,39 +118,24 @@ export async function POST(req: Request) {
     });
   }
 
-  console.log(`[WhatsApp] Stored ${imageBuffers.length} image(s) in batch. Waiting ${BATCH_WINDOW_MS}ms for more...`);
-
-  // Wait for more photos to arrive
+  console.log(`[WhatsApp] Stored ${imageBuffers.length} image(s). Waiting ${BATCH_WINDOW_MS}ms for more...`);
   await new Promise((r) => setTimeout(r, BATCH_WINDOW_MS));
 
-  // Check if we're the last message in the batch (only the last one processes)
-  // We do this by checking if any newer images were added after our wait started
+  // Check if we're the last in the batch
   const allBatchEntries = await prisma.jobEventHistory.findMany({
-    where: {
-      correlationId: batchKey,
-      entityType: "whatsapp_batch_image",
-    },
+    where: { correlationId: batchKey, entityType: "whatsapp_batch_image" },
     orderBy: { createdAt: "asc" },
   });
 
-  if (allBatchEntries.length === 0) {
+  if (allBatchEntries.length === 0) return emptyResponse();
+
+  const newestTimestamp = (allBatchEntries[allBatchEntries.length - 1].detailsJson as any)?.timestamp ?? 0;
+  if (Date.now() - newestTimestamp < BATCH_WINDOW_MS - 1000) {
+    console.log(`[WhatsApp] Newer photos in batch, deferring`);
     return emptyResponse();
   }
 
-  // Check if the most recent entry is older than BATCH_WINDOW_MS ago
-  const newestEntry = allBatchEntries[allBatchEntries.length - 1];
-  const newestTimestamp = (newestEntry.detailsJson as any)?.timestamp ?? 0;
-  const now = Date.now();
-
-  if (now - newestTimestamp < BATCH_WINDOW_MS - 1000) {
-    // A newer photo arrived after us — let that request handle the batch
-    console.log(`[WhatsApp] Newer photos in batch, deferring to later request`);
-    return emptyResponse();
-  }
-
-  // We're the last one — collect all images and process
-  console.log(`[WhatsApp] Processing batch of ${allBatchEntries.length} image(s) for ${from}`);
-
+  // Collect all batch images
   const batchImages: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (const entry of allBatchEntries) {
     const d = entry.detailsJson as any;
@@ -139,36 +148,42 @@ export async function POST(req: Request) {
     }
   }
 
-  // Clean up batch entries
+  // Clean up
   await prisma.jobEventHistory.deleteMany({
-    where: {
-      correlationId: batchKey,
-      entityType: "whatsapp_batch_image",
-    },
+    where: { correlationId: batchKey, entityType: "whatsapp_batch_image" },
   });
 
-  if (batchImages.length === 0) {
-    return emptyResponse();
-  }
+  if (batchImages.length === 0) return emptyResponse();
 
-  // Analyze all images together in one API call
+  // Analyze
   console.log(`[WhatsApp] Analyzing ${batchImages.length} combined image(s)...`);
-  const outcome = await analyzeImages(batchImages.slice(0, 5)); // API max 5
+  const outcome = await analyzeImages(batchImages.slice(0, 5));
 
   if (!outcome.ok) {
-    console.error(`[WhatsApp] Analysis failed: ${outcome.error.message}`);
     return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again.`);
   }
 
   console.log(`[WhatsApp] Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
 
+  // Store in conversation memory so follow-up questions work
+  if (tenantId) {
+    const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
+
+    await prisma.conversationMessage.createMany({
+      data: [
+        { tenantId, channel: `whatsapp:${from}`, role: "user", content: `(sent ${batchImages.length} crash photo(s))`, hasImages: true },
+        { tenantId, channel: `whatsapp:${from}`, role: "assistant", content: `[ANALYSIS RESULTS]\n${analysisText}` },
+      ],
+    }).catch(() => {});
+  }
+
+  // Build report
   const placeholders = buildTemplatePlaceholders(outcome.result, {
     customerName: from,
     caseReference: body ? ` — ${body}` : "",
   });
 
   const html = renderTemplate(getDefaultTemplate(), placeholders);
-
   const report = await prisma.analysisReport.create({
     data: {
       sourceType: "WHATSAPP",
