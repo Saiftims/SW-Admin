@@ -141,32 +141,6 @@ export async function pollAndProcessEmails(): Promise<number> {
             include: { tenant: true },
           });
 
-          // Store in conversation memory
-          if (firm?.tenant?.id) {
-            const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
-            await prisma.conversationMessage.createMany({
-              data: [
-                { tenantId: firm.tenant.id, channel: `email:${from}`, role: "user", content: `(sent ${attachments.length} crash photo(s) via email: "${subject}")`, hasImages: true },
-                { tenantId: firm.tenant.id, channel: `email:${from}`, role: "assistant", content: `[ANALYSIS RESULTS]\n${analysisText}` },
-              ],
-            }).catch(() => {});
-          }
-
-          // Store report in DB
-          await prisma.analysisReport.create({
-            data: {
-              tenantId: firm?.tenant?.id ?? null,
-              sourceType: "EMAIL",
-              sourceRef: from,
-              senderEmail: from,
-              subject: subject,
-              imageCount: attachments.length,
-              resultJson: outcome.result as any,
-              placeholders: placeholders as any,
-              renderedHtml: html,
-            },
-          }).catch(() => {});
-
           const placeholders = buildTemplatePlaceholders(outcome.result, {
             customerName: firm?.tenant?.name ?? from,
             lawFirmName: firm?.lawFirmName ?? "Valued Client",
@@ -192,6 +166,32 @@ export async function pollAndProcessEmails(): Promise<number> {
           }
 
           const html = renderTemplate(template, placeholders);
+
+          // Store in conversation memory
+          if (firm?.tenant?.id) {
+            const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
+            await prisma.conversationMessage.createMany({
+              data: [
+                { tenantId: firm.tenant.id, channel: `email:${from}`, role: "user", content: `(sent ${attachments.length} crash photo(s) via email: "${subject}")`, hasImages: true },
+                { tenantId: firm.tenant.id, channel: `email:${from}`, role: "assistant", content: `[ANALYSIS RESULTS]\n${analysisText}` },
+              ],
+            }).catch(() => {});
+          }
+
+          // Store report in DB
+          await prisma.analysisReport.create({
+            data: {
+              tenantId: firm?.tenant?.id ?? null,
+              sourceType: "EMAIL",
+              sourceRef: from,
+              senderEmail: from,
+              subject: subject,
+              imageCount: attachments.length,
+              resultJson: outcome.result as any,
+              placeholders: placeholders as any,
+              renderedHtml: html,
+            },
+          }).catch(() => {});
           console.log(`[Gmail] Sending response to ${from}...`);
           await sendAnalysisResponse(from, subject, html);
           console.log(`[Gmail] ✅ Response sent to ${from}`);
