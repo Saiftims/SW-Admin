@@ -6,6 +6,14 @@ import { renderTemplate, getDefaultTemplate } from "@/lib/services/email-templat
 
 export const maxDuration = 60;
 
+// WhatsApp sends each photo as a separate message. We batch them by waiting
+// for a quiet period before processing. Strategy:
+// 1. When a photo arrives, store it in DB as a pending asset
+// 2. Wait 8 seconds for more photos from the same sender
+// 3. After the wait, collect all pending photos and analyze together
+
+const BATCH_WINDOW_MS = 8000;
+
 export async function POST(req: Request) {
   const text = await req.text();
   const params = new URLSearchParams(text);
@@ -17,29 +25,23 @@ export async function POST(req: Request) {
 
   console.log(`[WhatsApp] Message from ${from}: "${body}" (${numMedia} media) SID: ${messageSid}`);
 
-  // DB-based deduplication
+  // Dedupe by MessageSid
   if (messageSid) {
-    const dedupeKey = `wa:${messageSid}`;
-    try {
-      const existing = await prisma.jobEventHistory.findFirst({
-        where: { correlationId: dedupeKey },
-      });
-      if (existing) {
-        console.log(`[WhatsApp] Duplicate ${dedupeKey}, skipping`);
-        return twimlResponse("");
-      }
-      await prisma.jobEventHistory.create({
-        data: {
-          correlationId: dedupeKey,
-          entityType: "whatsapp_message",
-          eventType: "WEBHOOK_RECEIVED",
-          detailsJson: { from, numMedia },
-        },
-      });
-    } catch {
-      console.log(`[WhatsApp] Dedupe race on ${dedupeKey}, skipping`);
-      return twimlResponse("");
+    const existing = await prisma.jobEventHistory.findFirst({
+      where: { correlationId: `wa:${messageSid}` },
+    });
+    if (existing) {
+      console.log(`[WhatsApp] Duplicate SID ${messageSid}, skipping`);
+      return emptyResponse();
     }
+    await prisma.jobEventHistory.create({
+      data: {
+        correlationId: `wa:${messageSid}`,
+        entityType: "whatsapp_message",
+        eventType: "WEBHOOK_RECEIVED",
+        detailsJson: { from, numMedia },
+      },
+    }).catch(() => {});
   }
 
   if (numMedia === 0) {
@@ -48,7 +50,7 @@ export async function POST(req: Request) {
 
   const env = getEnv();
 
-  // Download all media from this message
+  // Download images from this message
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (let i = 0; i < numMedia; i++) {
     const mediaUrl = params.get(`MediaUrl${i}`);
@@ -63,12 +65,10 @@ export async function POST(req: Request) {
       });
       if (res.ok) {
         const buffer = Buffer.from(await res.arrayBuffer());
-        const ext = mediaType.split("/")[1] ?? "jpg";
-        imageBuffers.push({ buffer, mimeType: mediaType, filename: `wa-photo-${i + 1}.${ext}` });
-        console.log(`[WhatsApp]   Downloaded media ${i + 1}: ${mediaType} (${(buffer.length / 1024).toFixed(0)}KB)`);
+        imageBuffers.push({ buffer, mimeType: mediaType, filename: `wa-${messageSid}-${i}.${mediaType.split("/")[1]}` });
       }
     } catch (err: any) {
-      console.error(`[WhatsApp]   Failed to download media ${i}: ${err?.message}`);
+      console.error(`[WhatsApp] Download failed: ${err?.message}`);
     }
   }
 
@@ -76,13 +76,88 @@ export async function POST(req: Request) {
     return twimlResponse("I couldn't read those attachments. Please send JPEG, PNG, or WebP crash photos.");
   }
 
-  // Send ALL images in one API call
-  console.log(`[WhatsApp] Analyzing ${imageBuffers.length} image(s) in single request...`);
-  const outcome = await analyzeImages(imageBuffers);
+  // Store images as pending batch entries
+  const batchKey = `wa-batch:${from}`;
+  for (const img of imageBuffers) {
+    await prisma.jobEventHistory.create({
+      data: {
+        correlationId: batchKey,
+        entityType: "whatsapp_batch_image",
+        eventType: "ATTACHMENT_STORED",
+        detailsJson: {
+          buffer: img.buffer.toString("base64"),
+          mimeType: img.mimeType,
+          filename: img.filename,
+          timestamp: Date.now(),
+        },
+      },
+    });
+  }
+
+  console.log(`[WhatsApp] Stored ${imageBuffers.length} image(s) in batch. Waiting ${BATCH_WINDOW_MS}ms for more...`);
+
+  // Wait for more photos to arrive
+  await new Promise((r) => setTimeout(r, BATCH_WINDOW_MS));
+
+  // Check if we're the last message in the batch (only the last one processes)
+  // We do this by checking if any newer images were added after our wait started
+  const allBatchEntries = await prisma.jobEventHistory.findMany({
+    where: {
+      correlationId: batchKey,
+      entityType: "whatsapp_batch_image",
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (allBatchEntries.length === 0) {
+    return emptyResponse();
+  }
+
+  // Check if the most recent entry is older than BATCH_WINDOW_MS ago
+  const newestEntry = allBatchEntries[allBatchEntries.length - 1];
+  const newestTimestamp = (newestEntry.detailsJson as any)?.timestamp ?? 0;
+  const now = Date.now();
+
+  if (now - newestTimestamp < BATCH_WINDOW_MS - 1000) {
+    // A newer photo arrived after us — let that request handle the batch
+    console.log(`[WhatsApp] Newer photos in batch, deferring to later request`);
+    return emptyResponse();
+  }
+
+  // We're the last one — collect all images and process
+  console.log(`[WhatsApp] Processing batch of ${allBatchEntries.length} image(s) for ${from}`);
+
+  const batchImages: { buffer: Buffer; mimeType: string; filename: string }[] = [];
+  for (const entry of allBatchEntries) {
+    const d = entry.detailsJson as any;
+    if (d?.buffer) {
+      batchImages.push({
+        buffer: Buffer.from(d.buffer, "base64"),
+        mimeType: d.mimeType,
+        filename: d.filename,
+      });
+    }
+  }
+
+  // Clean up batch entries
+  await prisma.jobEventHistory.deleteMany({
+    where: {
+      correlationId: batchKey,
+      entityType: "whatsapp_batch_image",
+    },
+  });
+
+  if (batchImages.length === 0) {
+    return emptyResponse();
+  }
+
+  // Analyze all images together in one API call
+  console.log(`[WhatsApp] Analyzing ${batchImages.length} combined image(s)...`);
+  const outcome = await analyzeImages(batchImages.slice(0, 5)); // API max 5
 
   if (!outcome.ok) {
     console.error(`[WhatsApp] Analysis failed: ${outcome.error.message}`);
-    return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again with a clear crash photo.`);
+    return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again.`);
   }
 
   console.log(`[WhatsApp] Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
@@ -106,13 +181,14 @@ export async function POST(req: Request) {
   });
 
   const reportUrl = `${env.APP_BASE_URL}/report/${report.id}`;
-  const summary = buildSummary(outcome.result, reportUrl);
+  const summary = buildSummary(outcome.result, reportUrl, batchImages.length);
   return twimlResponse(summary);
 }
 
-function buildSummary(r: NormalizedAnalysisResult, url: string): string {
+function buildSummary(r: NormalizedAnalysisResult, url: string, photoCount: number): string {
   const lines: string[] = [];
-  lines.push("*Silent Witness Analysis Complete*\n");
+  lines.push(`*Silent Witness Analysis Complete*`);
+  lines.push(`_${photoCount} photo(s) analyzed_\n`);
 
   if (r.deltaV) lines.push(`*Delta-V:* ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
   if (r.impact?.pdofDirection) lines.push(`*Impact:* ${r.impact.pdofDirection}`);
@@ -131,17 +207,15 @@ function buildSummary(r: NormalizedAnalysisResult, url: string): string {
 }
 
 function twimlResponse(message: string) {
-  if (!message) {
-    return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
-      status: 200,
-      headers: { "Content-Type": "text/xml" },
-    });
-  }
-
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Message>${message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message>
 </Response>`;
-
   return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
+}
+
+function emptyResponse() {
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
+    status: 200, headers: { "Content-Type": "text/xml" },
+  });
 }
