@@ -11,6 +11,7 @@ type Report = {
   senderEmail: string | null;
   subject: string | null;
   imageCount: number;
+  hasImages: boolean;
   resultJson: any;
   createdAt: string;
 };
@@ -28,6 +29,147 @@ const sourceColors: Record<string, string> = {
   WHATSAPP: "#22c55e",
   EMAIL: "#3b82f6",
 };
+
+function CaseCard({ r }: { r: Report }) {
+  const [expanded, setExpanded] = useState(false);
+  const result = r.resultJson as any;
+  const deltaV = result?.deltaV;
+  const sender = r.senderPhone || r.senderEmail || r.sourceRef || "Unknown";
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <div
+        style={{ display: "flex", gap: 16, padding: 16, cursor: "pointer" }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {/* Thumbnail */}
+        {r.hasImages ? (
+          <div style={{
+            width: 80,
+            height: 80,
+            borderRadius: 8,
+            overflow: "hidden",
+            flexShrink: 0,
+            background: "#1a1a2e",
+          }}>
+            <img
+              src={`/api/reports/${r.id}/images/0`}
+              alt="Crash photo"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              loading="lazy"
+            />
+          </div>
+        ) : (
+          <div style={{
+            width: 80,
+            height: 80,
+            borderRadius: 8,
+            flexShrink: 0,
+            background: "#1a1a2e",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--muted)",
+            fontSize: 11,
+          }}>
+            No photo
+          </div>
+        )}
+
+        {/* Info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{
+              display: "inline-block",
+              padding: "2px 8px",
+              borderRadius: 6,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              background: `${sourceColors[r.sourceType] ?? "var(--muted)"}20`,
+              color: sourceColors[r.sourceType] ?? "var(--muted)",
+              border: `1px solid ${sourceColors[r.sourceType] ?? "var(--muted)"}40`,
+            }}>
+              {sourceLabels[r.sourceType] ?? r.sourceType}
+            </span>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              {new Date(r.createdAt).toLocaleString()}
+            </span>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              {r.imageCount} photo{r.imageCount !== 1 ? "s" : ""}
+            </span>
+          </div>
+
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.subject || `Analysis from ${sender}`}
+          </div>
+
+          <div style={{ display: "flex", gap: 20, color: "var(--muted)", fontSize: 13, flexWrap: "wrap" }}>
+            {deltaV ? (
+              <span>Delta-V: <span style={{ color: "var(--brand)", fontWeight: 600 }}>{deltaV.min} – {deltaV.max} {deltaV.unit}</span></span>
+            ) : null}
+            {result?.confidence ? (
+              <span>Confidence: <span style={{ fontWeight: 600 }}>{result.confidence}</span></span>
+            ) : null}
+            {result?.impact?.collisionType ? (
+              <span>Type: <span style={{ fontWeight: 600 }}>{result.impact.collisionType}</span></span>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Arrow */}
+        <div style={{ color: "var(--muted)", fontSize: 18, flexShrink: 0, alignSelf: "center", transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "rotate(0)" }}>
+          &#9656;
+        </div>
+      </div>
+
+      {/* Expanded: all images + report link */}
+      {expanded ? (
+        <div style={{ borderTop: "1px solid var(--border)", padding: 16 }}>
+          {r.hasImages && r.imageCount > 0 ? (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+              {Array.from({ length: r.imageCount }).map((_, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: 160,
+                    height: 120,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    background: "#1a1a2e",
+                    border: "1px solid var(--border)",
+                    cursor: "pointer",
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open(`/api/reports/${r.id}/images/${i}`, "_blank");
+                  }}
+                >
+                  <img
+                    src={`/api/reports/${r.id}/images/${i}`}
+                    alt={`Crash photo ${i + 1}`}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    loading="lazy"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <Link
+            href={`/report/${r.id}`}
+            target="_blank"
+            className="btn"
+            style={{ fontSize: 13 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            View Full Report
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function CasesPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = use(params);
@@ -64,67 +206,7 @@ export default function CasesPage({ params }: { params: Promise<{ tenantId: stri
 
       {!loading && reports.length > 0 ? (
         <div style={{ display: "grid", gap: 10 }}>
-          {reports.map((r) => {
-            const result = r.resultJson as any;
-            const deltaV = result?.deltaV;
-            const sender = r.senderPhone || r.senderEmail || r.sourceRef || "Unknown";
-
-            return (
-              <Link
-                key={r.id}
-                href={`/report/${r.id}`}
-                target="_blank"
-                className="card"
-                style={{ textDecoration: "none", padding: 16 }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span style={{
-                        display: "inline-block",
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        fontSize: 10,
-                        fontWeight: 700,
-                        letterSpacing: "0.04em",
-                        background: `${sourceColors[r.sourceType] ?? "var(--muted)"}20`,
-                        color: sourceColors[r.sourceType] ?? "var(--muted)",
-                        border: `1px solid ${sourceColors[r.sourceType] ?? "var(--muted)"}40`,
-                      }}>
-                        {sourceLabels[r.sourceType] ?? r.sourceType}
-                      </span>
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        {new Date(r.createdAt).toLocaleString()}
-                      </span>
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        {r.imageCount} photo{r.imageCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
-                      {r.subject || `Analysis from ${sender}`}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 20, color: "var(--muted)", fontSize: 13 }}>
-                      {deltaV ? (
-                        <span>Delta-V: <span style={{ color: "var(--brand)", fontWeight: 600 }}>{deltaV.min} – {deltaV.max} {deltaV.unit}</span></span>
-                      ) : null}
-                      {result?.confidence ? (
-                        <span>Confidence: <span style={{ fontWeight: 600 }}>{result.confidence}</span></span>
-                      ) : null}
-                      {result?.impact?.collisionType ? (
-                        <span>Type: <span style={{ fontWeight: 600 }}>{result.impact.collisionType}</span></span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div style={{ color: "var(--brand)", fontSize: 13, whiteSpace: "nowrap" }}>
-                    View report →
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+          {reports.map((r) => <CaseCard key={r.id} r={r} />)}
         </div>
       ) : null}
     </div>

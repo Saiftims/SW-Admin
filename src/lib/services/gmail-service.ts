@@ -179,6 +179,11 @@ export async function pollAndProcessEmails(): Promise<number> {
           }
 
           // Store report in DB
+          const imageData = attachments.map((a) => ({
+            base64: a.content.toString("base64"),
+            mimeType: a.contentType,
+            filename: a.filename,
+          }));
           await prisma.analysisReport.create({
             data: {
               tenantId: firm?.tenant?.id ?? null,
@@ -187,6 +192,7 @@ export async function pollAndProcessEmails(): Promise<number> {
               senderEmail: from,
               subject: subject,
               imageCount: attachments.length,
+              imageData: imageData as any,
               resultJson: outcome.result as any,
               placeholders: placeholders as any,
               renderedHtml: html,

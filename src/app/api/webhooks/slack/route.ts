@@ -118,6 +118,11 @@ export async function POST(req: Request) {
       const r = response.analysisResults[0];
       const placeholders = buildTemplatePlaceholders(r, { customerName: event.user });
       const html = renderTemplate(getDefaultTemplate(), placeholders);
+      const imageData = imageBuffers.map((img) => ({
+        base64: img.buffer.toString("base64"),
+        mimeType: img.mimeType,
+        filename: img.filename,
+      }));
       await prisma.analysisReport.create({
         data: {
           tenantId,
@@ -125,6 +130,7 @@ export async function POST(req: Request) {
           sourceRef: `${event.user}@${channel}`,
           subject: userMessage || null,
           imageCount: imageBuffers.length,
+          imageData: imageData as any,
           resultJson: r as any,
           placeholders: placeholders as any,
           renderedHtml: html,

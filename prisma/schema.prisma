@@ -480,6 +480,7 @@ model AnalysisReport {
   senderEmail   String?
   subject       String?
   imageCount    Int      @default(1)
+  imageData     Json?
   resultJson    Json
   placeholders  Json?
   renderedHtml  String?

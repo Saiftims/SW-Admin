@@ -12,7 +12,7 @@ export async function GET(
     const params = await context.params;
     await requireTenantAccessOrThrow({ user, tenantId: params.tenantId });
 
-    const reports = await prisma.analysisReport.findMany({
+    const raw = await prisma.analysisReport.findMany({
       where: { tenantId: params.tenantId },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -24,10 +24,17 @@ export async function GET(
         senderEmail: true,
         subject: true,
         imageCount: true,
+        imageData: true,
         resultJson: true,
         createdAt: true,
       },
     });
+
+    const reports = raw.map((r) => ({
+      ...r,
+      hasImages: Array.isArray(r.imageData) && r.imageData.length > 0,
+      imageData: undefined,
+    }));
 
     return NextResponse.json({ reports });
   } catch (e: any) {

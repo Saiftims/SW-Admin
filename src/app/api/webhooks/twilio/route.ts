@@ -122,6 +122,11 @@ export async function POST(req: Request) {
   });
 
   const html = renderTemplate(getDefaultTemplate(), placeholders);
+  const imageData = imageBuffers.map((img) => ({
+    base64: img.buffer.toString("base64"),
+    mimeType: img.mimeType,
+    filename: img.filename,
+  }));
   const report = await prisma.analysisReport.create({
     data: {
       tenantId: tenantId || null,
@@ -130,6 +135,7 @@ export async function POST(req: Request) {
       senderPhone: from,
       subject: body || null,
       imageCount: imageBuffers.length,
+      imageData: imageData as any,
       resultJson: outcome.result as any,
       placeholders: placeholders as any,
       renderedHtml: html,
