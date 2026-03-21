@@ -131,7 +131,10 @@ Responding via ${currentChannelLabel}. Bold: *text*, Italic: _text_, Lists: bull
       const channelLabel = formatChannelLabel(msg.channel);
       const isCurrentChannel = msg.channel === ctx.currentChannel;
       const prefix = isCurrentChannel ? "" : `[via ${channelLabel}] `;
-      messages.push({ role: msg.role, content: `${prefix}${msg.content}` });
+      const cleaned = msg.content
+        .replace(/^\[voice reply spoken to user\]\s*/i, "")
+        .replace(/^\[voice message transcription\]\s*/i, "");
+      messages.push({ role: msg.role, content: `${prefix}${cleaned}` });
     }
   }
 
