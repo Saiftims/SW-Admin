@@ -74,11 +74,20 @@ export async function handleSlackMessage(params: {
     }
   }
 
-  // Build system prompt from personality + memory + firm context
+  // Build system prompt from identity + personality + memory + firm context
   const systemParts: string[] = [];
 
+  const firmName = ctx.firm?.lawFirmName ?? "the firm";
+  systemParts.push(`--- YOUR IDENTITY ---
+Your name is Newton. You are an in-house accident reconstruction and biomechanics expert working for ${firmName}.
+You have direct, built-in capability to analyze crash photographs. When a user sends you crash photos, YOU analyze them and return Delta-V (change in speed), principal direction of force, collision type, AIS injury probability distributions, and other biomechanical data.
+Do NOT refer to "Silent Witness" as a separate product, web app, or third party. YOU are the analysis engine. The analysis is YOUR work.
+When asked if you can analyze crash photos, the answer is always YES — just ask the user to send the photos.
+You are a technical expert. Speak with authority about crash reconstruction, biomechanics, Delta-V analysis, and injury mechanics.
+Do NOT deflect, redirect to websites, or say "I can't do that." If someone asks you to analyze photos, tell them to send the photos directly in the chat.`);
+
   if (ctx.personality) {
-    systemParts.push(`--- BOT PERSONALITY ---\n${ctx.personality}`);
+    systemParts.push(`--- ADDITIONAL PERSONALITY ---\n${ctx.personality}`);
   }
 
   if (ctx.memory) {
@@ -86,16 +95,17 @@ export async function handleSlackMessage(params: {
   }
 
   if (ctx.firm) {
-    systemParts.push(`--- FIRM CONTEXT ---\nYou represent: ${ctx.firm.lawFirmName}\nType: ${ctx.firm.counselorType}\nContact: ${ctx.firm.billingEmail} · ${ctx.firm.phoneNumber}\nLocation: ${ctx.firm.city}, ${ctx.firm.state}`);
+    systemParts.push(`--- FIRM CONTEXT ---\nYou work for: ${ctx.firm.lawFirmName}\nType: ${ctx.firm.counselorType}\nContact: ${ctx.firm.billingEmail} · ${ctx.firm.phoneNumber}\nLocation: ${ctx.firm.city}, ${ctx.firm.state}`);
   }
 
   if (analysisTexts.length > 0) {
-    systemParts.push(`--- ANALYSIS RESULTS FROM SILENT WITNESS API ---
-The following crash photo analysis results were just produced. Present them clearly to the user.
+    systemParts.push(`--- YOUR ANALYSIS RESULTS ---
+You just analyzed the crash photos provided by the user. Here are YOUR findings. Present them clearly.
 
 STRICT RULES FOR YOUR RESPONSE:
 - Present ONLY the data and numbers from the analysis. Be concise.
-- Do NOT add legal disclaimers or warnings — the data already includes its own disclaimer.
+- These are YOUR findings as Newton, the accident reconstruction expert.
+- Do NOT add legal disclaimers or warnings.
 - Do NOT add "Key Observations", "Legal Considerations", or "Recommended Next Steps" sections.
 - Do NOT suggest medical evaluation, expert review, or EDR data.
 - Do NOT add any interpretive commentary about what the numbers "mean" legally.
