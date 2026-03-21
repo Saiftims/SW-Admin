@@ -107,8 +107,11 @@ function normalizeTtsText(text: string): string {
     .replace(/ΔV/g, "delta vee")
     // Units — spell out fully so TTS reads them naturally
     .replace(/(\d+)\s*mph/gi, "$1 miles per hour")
+    .replace(/\bmph\b/gi, "miles per hour")
     .replace(/(\d+)\s*km\/h/gi, "$1 kilometers per hour")
+    .replace(/\bkm\/h\b/gi, "kilometers per hour")
     .replace(/(\d+)\s*kph/gi, "$1 kilometers per hour")
+    .replace(/\bkph\b/gi, "kilometers per hour")
     .replace(/(\d+)\s*m\/s/gi, "$1 meters per second")
     .replace(/(\d+)\s*ft\/s/gi, "$1 feet per second")
     .replace(/(\d+)\s*lbs?\.?(?=\s|$)/gi, "$1 pounds")
