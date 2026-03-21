@@ -11,11 +11,36 @@ export async function POST(req: Request) {
   const params = new URLSearchParams(text);
 
   const from = params.get("From") ?? "";
-  const to = params.get("To") ?? "";
+  const messageSid = params.get("MessageSid") ?? "";
   const body = params.get("Body") ?? "";
   const numMedia = parseInt(params.get("NumMedia") ?? "0", 10);
 
-  console.log(`[WhatsApp] Message from ${from}: "${body}" (${numMedia} media)`);
+  console.log(`[WhatsApp] Message from ${from}: "${body}" (${numMedia} media) SID: ${messageSid}`);
+
+  // DB-based deduplication
+  if (messageSid) {
+    const dedupeKey = `wa:${messageSid}`;
+    try {
+      const existing = await prisma.jobEventHistory.findFirst({
+        where: { correlationId: dedupeKey },
+      });
+      if (existing) {
+        console.log(`[WhatsApp] Duplicate ${dedupeKey}, skipping`);
+        return twimlResponse("");
+      }
+      await prisma.jobEventHistory.create({
+        data: {
+          correlationId: dedupeKey,
+          entityType: "whatsapp_message",
+          eventType: "WEBHOOK_RECEIVED",
+          detailsJson: { from, numMedia },
+        },
+      });
+    } catch {
+      console.log(`[WhatsApp] Dedupe race on ${dedupeKey}, skipping`);
+      return twimlResponse("");
+    }
+  }
 
   if (numMedia === 0) {
     return twimlResponse("Welcome to Silent Witness.\n\nSend crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust send one or more photos of vehicle damage.");
@@ -23,7 +48,7 @@ export async function POST(req: Request) {
 
   const env = getEnv();
 
-  // Download media
+  // Download all media from this message
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (let i = 0; i < numMedia; i++) {
     const mediaUrl = params.get(`MediaUrl${i}`);
@@ -51,17 +76,17 @@ export async function POST(req: Request) {
     return twimlResponse("I couldn't read those attachments. Please send JPEG, PNG, or WebP crash photos.");
   }
 
-  console.log(`[WhatsApp] Analyzing ${imageBuffers.length} image(s)...`);
+  // Send ALL images in one API call
+  console.log(`[WhatsApp] Analyzing ${imageBuffers.length} image(s) in single request...`);
   const outcome = await analyzeImages(imageBuffers);
 
   if (!outcome.ok) {
-    console.error(`[WhatsApp] ❌ Analysis failed: ${outcome.error.message}`);
+    console.error(`[WhatsApp] Analysis failed: ${outcome.error.message}`);
     return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again with a clear crash photo.`);
   }
 
-  console.log(`[WhatsApp] ✅ Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
+  console.log(`[WhatsApp] Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
 
-  // Build placeholders and store report
   const placeholders = buildTemplatePlaceholders(outcome.result, {
     customerName: from,
     caseReference: body ? ` — ${body}` : "",
@@ -81,59 +106,42 @@ export async function POST(req: Request) {
   });
 
   const reportUrl = `${env.APP_BASE_URL}/report/${report.id}`;
-  console.log(`[WhatsApp] Report: ${reportUrl}`);
-
-  const summary = buildWhatsAppSummary(outcome.result, reportUrl);
+  const summary = buildSummary(outcome.result, reportUrl);
   return twimlResponse(summary);
 }
 
-function buildWhatsAppSummary(r: NormalizedAnalysisResult, url: string): string {
+function buildSummary(r: NormalizedAnalysisResult, url: string): string {
   const lines: string[] = [];
   lines.push("*Silent Witness Analysis Complete*\n");
 
-  if (r.deltaV) {
-    lines.push(`*Delta-V:* ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
-  }
-  if (r.impact?.pdofDirection) {
-    lines.push(`*Impact:* ${r.impact.pdofDirection}`);
-  }
-  if (r.impact?.collisionType) {
-    lines.push(`*Type:* ${r.impact.collisionType}`);
-  }
-  if (r.confidence) {
-    lines.push(`*Confidence:* ${r.confidence}`);
-  }
+  if (r.deltaV) lines.push(`*Delta-V:* ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
+  if (r.impact?.pdofDirection) lines.push(`*Impact:* ${r.impact.pdofDirection}`);
+  if (r.impact?.collisionType) lines.push(`*Type:* ${r.impact.collisionType}`);
+  if (r.confidence) lines.push(`*Confidence:* ${r.confidence}`);
 
   if (r.aisDistribution.length > 0) {
     lines.push("\n*AIS Injury Probability:*");
     for (const a of r.aisDistribution) {
-      const pct = (a.probability * 100).toFixed(1);
-      lines.push(`  AIS ${a.level} ${a.label}: ${pct}%`);
+      lines.push(`  AIS ${a.level} ${a.label}: ${(a.probability * 100).toFixed(1)}%`);
     }
   }
 
   lines.push(`\n*Full report:*\n${url}`);
-
   return lines.join("\n");
 }
 
 function twimlResponse(message: string) {
+  if (!message) {
+    return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
+  }
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>${escapeXml(message)}</Message>
+  <Message>${message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message>
 </Response>`;
 
-  return new Response(xml, {
-    status: 200,
-    headers: { "Content-Type": "text/xml" },
-  });
-}
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
 }
