@@ -124,9 +124,12 @@ export async function POST(req: Request) {
   const html = renderTemplate(getDefaultTemplate(), placeholders);
   const report = await prisma.analysisReport.create({
     data: {
+      tenantId: tenantId || null,
       sourceType: "SMS",
       sourceRef: from,
       senderPhone: from,
+      subject: body || null,
+      imageCount: imageBuffers.length,
       resultJson: outcome.result as any,
       placeholders: placeholders as any,
       renderedHtml: html,

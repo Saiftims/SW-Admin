@@ -186,9 +186,12 @@ export async function POST(req: Request) {
   const html = renderTemplate(getDefaultTemplate(), placeholders);
   const report = await prisma.analysisReport.create({
     data: {
+      tenantId: tenantId || null,
       sourceType: "WHATSAPP",
       sourceRef: from,
       senderPhone: from,
+      subject: body || null,
+      imageCount: batchImages.length,
       resultJson: outcome.result as any,
       placeholders: placeholders as any,
       renderedHtml: html,

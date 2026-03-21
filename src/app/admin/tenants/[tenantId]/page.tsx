@@ -242,6 +242,17 @@ export default function TenantDetailPage({ params }: { params: Promise<{ tenantI
             <FirmEditor tenantId={tenantId} firm={tenant.firm} onSaved={(updated) => setTenant({ ...tenant, firm: updated, name: updated.lawFirmName })} />
           ) : null}
 
+          {/* Case files */}
+          <Link href={`/admin/tenants/${tenantId}/cases`} className="card" style={{ textDecoration: "none", marginBottom: 12, display: "block" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 750, marginBottom: 4 }}>Case Files</div>
+                <div style={{ color: "var(--muted)", fontSize: 13 }}>View all crash analyses across Slack, SMS, WhatsApp, and Email.</div>
+              </div>
+              <div style={{ color: "var(--brand)", fontSize: 13 }}>View cases →</div>
+            </div>
+          </Link>
+
           {/* Bot config */}
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr", marginBottom: 12 }}>
             <Link href={`/admin/tenants/${tenantId}/personality`} className="card" style={{ textDecoration: "none" }}>

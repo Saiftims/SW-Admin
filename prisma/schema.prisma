@@ -110,6 +110,7 @@ model Tenant {
   uploadedAssets             UploadedAsset[]
   twilioConfig               TwilioConfig?
   conversationMessages       ConversationMessage[]
+  analysisReports            AnalysisReport[]
 
   auditLogs                   AuditLog[]
   jobEventHistory             JobEventHistory[]
@@ -472,15 +473,21 @@ model TwilioConfig {
 
 model AnalysisReport {
   id            String   @id @default(uuid())
+  tenantId      String?
   sourceType    String
   sourceRef     String?
   senderPhone   String?
   senderEmail   String?
+  subject       String?
+  imageCount    Int      @default(1)
   resultJson    Json
   placeholders  Json?
   renderedHtml  String?
   createdAt     DateTime @default(now())
 
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
   @@index([sourceType, createdAt])
 }
 

@@ -111,6 +111,27 @@ export async function POST(req: Request) {
       imageBuffers: imageBuffers.length > 0 ? imageBuffers : undefined,
     });
 
+    // Store analysis report if images were analyzed
+    if (response.analysisResults && response.analysisResults.length > 0) {
+      const { buildTemplatePlaceholders } = await import("@/lib/services/silent-witness-client");
+      const { renderTemplate, getDefaultTemplate } = await import("@/lib/services/email-template");
+      const r = response.analysisResults[0];
+      const placeholders = buildTemplatePlaceholders(r, { customerName: event.user });
+      const html = renderTemplate(getDefaultTemplate(), placeholders);
+      await prisma.analysisReport.create({
+        data: {
+          tenantId,
+          sourceType: "SLACK",
+          sourceRef: `${event.user}@${channel}`,
+          subject: userMessage || null,
+          imageCount: imageBuffers.length,
+          resultJson: r as any,
+          placeholders: placeholders as any,
+          renderedHtml: html,
+        },
+      }).catch(() => {});
+    }
+
     // Delete the "analyzing" message
     if (analyzingTs) {
       fetch("https://slack.com/api/chat.delete", {

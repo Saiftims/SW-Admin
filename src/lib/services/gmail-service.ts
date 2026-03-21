@@ -155,12 +155,15 @@ export async function pollAndProcessEmails(): Promise<number> {
           // Store report in DB
           await prisma.analysisReport.create({
             data: {
+              tenantId: firm?.tenant?.id ?? null,
               sourceType: "EMAIL",
               sourceRef: from,
               senderEmail: from,
+              subject: subject,
+              imageCount: attachments.length,
               resultJson: outcome.result as any,
-              placeholders: {} as any,
-              renderedHtml: null,
+              placeholders: placeholders as any,
+              renderedHtml: html,
             },
           }).catch(() => {});
 
