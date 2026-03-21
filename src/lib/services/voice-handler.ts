@@ -34,9 +34,10 @@ export async function processVoiceMessage(opts: {
   }
 
   // 2. Claude AI response (same bot as text messages)
+  // Tag the message as a voice transcription so memory has full context
   const response = await handleSlackMessage({
     tenantId: opts.tenantId,
-    userMessage: stt.text,
+    userMessage: `[voice message transcription] ${stt.text}`,
     channel: opts.channel,
   });
 
@@ -60,7 +61,17 @@ export async function processVoiceMessage(opts: {
   const tts = await textToSpeech(cleanText, voiceId);
   console.log(`[Voice] Audio generated (${(tts.buffer.length / 1024).toFixed(0)}KB)`);
 
-  // 5. Store audio for public serving
+  // 5. Store the spoken reply in conversation memory so future interactions have context
+  await prisma.conversationMessage.create({
+    data: {
+      tenantId: opts.tenantId,
+      channel: opts.channel,
+      role: "assistant",
+      content: `[voice reply spoken to user] ${cleanText}`,
+    },
+  }).catch(() => {});
+
+  // 6. Store audio for public serving
   const audioId = randomUUID();
   await prisma.jobEventHistory.create({
     data: {
