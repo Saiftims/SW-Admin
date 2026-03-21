@@ -3,65 +3,89 @@ import { getEnv } from "@/lib/env";
 import { prisma } from "@/lib/db";
 import { analyzeImages, buildTemplatePlaceholders, type NormalizedAnalysisResult } from "@/lib/services/silent-witness-client";
 import { renderTemplate, getDefaultTemplate } from "@/lib/services/email-template";
-import twilio from "twilio";
+import { handleSlackMessage } from "@/lib/services/anthropic-bot";
+
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const env = getEnv();
-
-  // Parse the form-encoded body Twilio sends
   const text = await req.text();
   const params = new URLSearchParams(text);
 
   const from = params.get("From") ?? "";
   const to = params.get("To") ?? "";
+  const messageSid = params.get("MessageSid") ?? "";
   const body = params.get("Body") ?? "";
   const numMedia = parseInt(params.get("NumMedia") ?? "0", 10);
 
-  console.log(`[Twilio] Inbound SMS from ${from} to ${to}: "${body}" (${numMedia} media)`);
+  console.log(`[SMS] Message from ${from}: "${body}" (${numMedia} media) SID: ${messageSid}`);
 
-  // Look up tenant by the Twilio phone number that received the message
+  // Dedupe by MessageSid
+  if (messageSid) {
+    const existing = await prisma.jobEventHistory.findFirst({
+      where: { correlationId: `sms:${messageSid}` },
+    });
+    if (existing) {
+      return emptyResponse();
+    }
+    await prisma.jobEventHistory.create({
+      data: {
+        correlationId: `sms:${messageSid}`,
+        entityType: "sms_message",
+        eventType: "WEBHOOK_RECEIVED",
+        detailsJson: { from, numMedia },
+      },
+    }).catch(() => {});
+  }
+
+  // Find tenant by Twilio number
   const twilioConfig = await prisma.twilioConfig.findFirst({
     where: { phoneNumber: to },
     include: { tenant: { include: { firm: true } } },
   });
+  const tenant = twilioConfig?.tenant ?? await prisma.tenant.findFirst({ include: { firm: true } });
+  const tenantId = tenant?.id ?? "";
 
-  if (twilioConfig) {
-    console.log(`[Twilio] Matched tenant: ${twilioConfig.tenant.name} (${twilioConfig.tenant.id})`);
-  }
-
+  // ─── Text-only: conversational AI ─────────────────────────────────
   if (numMedia === 0) {
-    return twimlResponse("Welcome to Silent Witness. Send crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust text one or more photos of vehicle damage.");
+    if (!body.trim()) {
+      return twimlResponse("Welcome to Silent Witness.\n\nSend crash photos for Delta-V analysis, or ask questions about your case.");
+    }
+
+    try {
+      const response = await handleSlackMessage({
+        tenantId,
+        userMessage: body,
+        channel: `sms:${from}`,
+      });
+
+      return twimlResponse(response.text.replace(/\*\*(.+?)\*\*/g, "$1"));
+    } catch (err: any) {
+      console.error(`[SMS] AI error: ${err?.message}`);
+      return twimlResponse("Sorry, I encountered an error. Please try again.");
+    }
   }
 
-  // Download media attachments from Twilio
-  const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
+  // ─── Photos: analyze ──────────────────────────────────────────────
 
+  const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (let i = 0; i < numMedia; i++) {
     const mediaUrl = params.get(`MediaUrl${i}`);
     const mediaType = params.get(`MediaContentType${i}`) ?? "image/jpeg";
-
     if (!mediaUrl || !mediaType.startsWith("image/")) continue;
 
     try {
-      // Twilio media URLs require basic auth with account SID + auth token
       const res = await fetch(mediaUrl, {
         headers: {
           Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
         },
       });
-
       if (res.ok) {
         const buffer = Buffer.from(await res.arrayBuffer());
-        const ext = mediaType.split("/")[1] ?? "jpg";
-        imageBuffers.push({
-          buffer,
-          mimeType: mediaType,
-          filename: `sms-photo-${i + 1}.${ext}`,
-        });
-        console.log(`[Twilio]   Downloaded media ${i + 1}: ${mediaType} (${(buffer.length / 1024).toFixed(0)}KB)`);
+        imageBuffers.push({ buffer, mimeType: mediaType, filename: `sms-${i + 1}.${mediaType.split("/")[1]}` });
       }
     } catch (err: any) {
-      console.error(`[Twilio]   Failed to download media ${i}: ${err?.message}`);
+      console.error(`[SMS] Download failed: ${err?.message}`);
     }
   }
 
@@ -69,27 +93,35 @@ export async function POST(req: Request) {
     return twimlResponse("I couldn't read those attachments. Please send JPEG, PNG, or WebP crash photos.");
   }
 
-  // Run Silent Witness analysis
-  console.log(`[Twilio] Analyzing ${imageBuffers.length} image(s)...`);
+  console.log(`[SMS] Analyzing ${imageBuffers.length} image(s)...`);
   const outcome = await analyzeImages(imageBuffers);
 
   if (!outcome.ok) {
-    console.error(`[Twilio] ❌ Analysis failed: ${outcome.error.message}`);
-    return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again with a clear crash photo.`);
+    return twimlResponse(`Analysis failed: ${outcome.error.message}\n\nPlease try again.`);
   }
 
-  console.log(`[Twilio] ✅ Analysis succeeded — Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
+  console.log(`[SMS] Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}`);
 
-  // Build placeholders and render HTML
+  // Store in conversation memory
+  if (tenantId) {
+    const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
+
+    await prisma.conversationMessage.createMany({
+      data: [
+        { tenantId, channel: `sms:${from}`, role: "user", content: `(sent ${imageBuffers.length} crash photo(s))`, hasImages: true },
+        { tenantId, channel: `sms:${from}`, role: "assistant", content: `[ANALYSIS RESULTS]\n${analysisText}` },
+      ],
+    }).catch(() => {});
+  }
+
+  // Build report
   const placeholders = buildTemplatePlaceholders(outcome.result, {
-    customerName: from,
-    lawFirmName: "",
+    customerName: tenant?.firm?.lawFirmName ?? from,
+    lawFirmName: tenant?.firm?.lawFirmName ?? "",
     caseReference: body ? ` — ${body}` : "",
   });
 
   const html = renderTemplate(getDefaultTemplate(), placeholders);
-
-  // Store the report in DB
   const report = await prisma.analysisReport.create({
     data: {
       sourceType: "SMS",
@@ -102,57 +134,39 @@ export async function POST(req: Request) {
   });
 
   const reportUrl = `${env.APP_BASE_URL}/report/${report.id}`;
-  console.log(`[Twilio] Report created: ${reportUrl}`);
-
-  // Build a compact SMS summary
-  const summary = buildSmsSummary(outcome.result, reportUrl);
-
+  const summary = buildSummary(outcome.result, reportUrl);
   return twimlResponse(summary);
 }
 
-function buildSmsSummary(r: NormalizedAnalysisResult, url: string): string {
+function buildSummary(r: NormalizedAnalysisResult, url: string): string {
   const lines: string[] = [];
   lines.push("Silent Witness Analysis Complete\n");
-
-  if (r.deltaV) {
-    lines.push(`Delta-V: ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
-  }
-  if (r.impact?.pdofDirection) {
-    lines.push(`Impact: ${r.impact.pdofDirection}`);
-  }
-  if (r.impact?.collisionType) {
-    lines.push(`Type: ${r.impact.collisionType}`);
-  }
-  if (r.confidence) {
-    lines.push(`Confidence: ${r.confidence}`);
-  }
+  if (r.deltaV) lines.push(`Delta-V: ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
+  if (r.impact?.pdofDirection) lines.push(`Impact: ${r.impact.pdofDirection}`);
+  if (r.impact?.collisionType) lines.push(`Type: ${r.impact.collisionType}`);
+  if (r.confidence) lines.push(`Confidence: ${r.confidence}`);
 
   if (r.aisDistribution.length > 0) {
-    lines.push(`AIS distribution: ${r.aisDistribution.map(a => `${a.label} ${(a.probability * 100).toFixed(0)}%`).join(" · ")}`);
+    lines.push(`\nAIS Injury Probability:`);
+    for (const a of r.aisDistribution) {
+      lines.push(`  AIS ${a.level} ${a.label}: ${(a.probability * 100).toFixed(1)}%`);
+    }
   }
 
   lines.push(`\nFull report:\n${url}`);
-
   return lines.join("\n");
 }
 
 function twimlResponse(message: string) {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>${escapeXml(message)}</Message>
+  <Message>${message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message>
 </Response>`;
-
-  return new Response(xml, {
-    status: 200,
-    headers: { "Content-Type": "text/xml" },
-  });
+  return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
 }
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+function emptyResponse() {
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
+    status: 200, headers: { "Content-Type": "text/xml" },
+  });
 }
