@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   }
 
   if (numMedia === 0) {
-    return twimlResponse("👋 Welcome to Silent Witness! Send crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust text me one or more photos of vehicle damage.");
+    return twimlResponse("Welcome to Silent Witness. Send crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust text one or more photos of vehicle damage.");
   }
 
   // Download media attachments from Twilio
@@ -112,7 +112,7 @@ export async function POST(req: Request) {
 
 function buildSmsSummary(r: NormalizedAnalysisResult, url: string): string {
   const lines: string[] = [];
-  lines.push("🔍 Silent Witness Analysis Complete\n");
+  lines.push("Silent Witness Analysis Complete\n");
 
   if (r.deltaV) {
     lines.push(`Delta-V: ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
@@ -131,7 +131,7 @@ function buildSmsSummary(r: NormalizedAnalysisResult, url: string): string {
     lines.push(`AIS distribution: ${r.aisDistribution.map(a => `${a.label} ${(a.probability * 100).toFixed(0)}%`).join(" · ")}`);
   }
 
-  lines.push(`\n📊 Full report:\n${url}`);
+  lines.push(`\nFull report:\n${url}`);
 
   return lines.join("\n");
 }

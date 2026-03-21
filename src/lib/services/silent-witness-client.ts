@@ -174,7 +174,7 @@ export async function analyzeImage(
 
 export function formatAnalysisForSlack(r: NormalizedAnalysisResult): string {
   const lines: string[] = [];
-  lines.push("*🔍 Silent Witness — Crash Analysis*\n");
+  lines.push("*Silent Witness — Crash Analysis*\n");
 
   if (r.deltaV) {
     lines.push(`*Delta-V:* ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
@@ -226,7 +226,7 @@ export function buildSlackBlocks(r: NormalizedAnalysisResult): any[] {
   // Header
   blocks.push({
     type: "header",
-    text: { type: "plain_text", text: "🔍 Silent Witness — Crash Analysis", emoji: true },
+    text: { type: "plain_text", text: "Silent Witness — Crash Analysis", emoji: false },
   });
 
   // Impact metrics section
@@ -272,7 +272,7 @@ export function buildSlackBlocks(r: NormalizedAnalysisResult): any[] {
   if (r.disclaimer) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: `⚠️ _${r.disclaimer}_` }],
+      elements: [{ type: "mrkdwn", text: `_${r.disclaimer}_` }],
     });
   }
 

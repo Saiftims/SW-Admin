@@ -18,7 +18,7 @@ export async function POST(req: Request) {
   console.log(`[WhatsApp] Message from ${from}: "${body}" (${numMedia} media)`);
 
   if (numMedia === 0) {
-    return twimlResponse("👋 Welcome to Silent Witness!\n\nSend crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust send one or more photos of vehicle damage.");
+    return twimlResponse("Welcome to Silent Witness.\n\nSend crash photos and I'll analyze them with Delta-V, impact direction, and injury probability data.\n\nJust send one or more photos of vehicle damage.");
   }
 
   const env = getEnv();
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
 
 function buildWhatsAppSummary(r: NormalizedAnalysisResult, url: string): string {
   const lines: string[] = [];
-  lines.push("🔍 *Silent Witness Analysis Complete*\n");
+  lines.push("*Silent Witness Analysis Complete*\n");
 
   if (r.deltaV) {
     lines.push(`*Delta-V:* ${r.deltaV.min} – ${r.deltaV.max} ${r.deltaV.unit}`);
@@ -112,7 +112,7 @@ function buildWhatsAppSummary(r: NormalizedAnalysisResult, url: string): string 
     }
   }
 
-  lines.push(`\n📊 *Full report:*\n${url}`);
+  lines.push(`\n*Full report:*\n${url}`);
 
   return lines.join("\n");
 }

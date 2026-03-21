@@ -109,7 +109,8 @@ You are responding in Slack. Use Slack mrkdwn formatting:
 - Italic: _text_
 - Lists: use bullet points with •
 - Do NOT use Markdown headers (# or ##). Use *Bold Text* instead.
-- Keep responses concise.`);
+- Keep responses concise.
+- NEVER use emojis. No emoji characters at all in your responses.`);
 
   const systemPrompt = systemParts.join("\n\n") || "You are a helpful crash analysis assistant.";
 

@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     const typingRes = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, text: "🔍 _Analyzing crash photos..._" }),
+      body: JSON.stringify({ channel, text: "_Analyzing crash photos..._" }),
     });
     const typingData = await typingRes.json();
     if (typingData.ok) analyzingTs = typingData.ts;
