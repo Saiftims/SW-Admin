@@ -77,11 +77,15 @@ export async function POST(req: Request) {
 
   if (numMedia > 0) {
     const mediaType0 = params.get("MediaContentType0") ?? "";
-    if (mediaType0.startsWith("audio/") || mediaType0 === "video/ogg") {
+    console.log(`[WhatsApp] Media type: "${mediaType0}" numMedia=${numMedia}`);
+
+    const isAudio = mediaType0.startsWith("audio/") || mediaType0.startsWith("video/ogg") || mediaType0 === "video/3gpp";
+    if (isAudio) {
       const mediaUrl = params.get("MediaUrl0") ?? "";
+      console.log(`[WhatsApp] Voice message from ${from}, type=${mediaType0}, url=${mediaUrl ? "yes" : "no"}`);
+
       if (mediaUrl) {
         try {
-          console.log(`[WhatsApp] Voice message from ${from} (${mediaType0})`);
           const audioRes = await fetch(mediaUrl, {
             headers: {
               Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
@@ -89,6 +93,7 @@ export async function POST(req: Request) {
           });
           if (!audioRes.ok) throw new Error(`Download failed: ${audioRes.status}`);
           const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+          console.log(`[WhatsApp] Downloaded audio: ${(audioBuffer.length / 1024).toFixed(0)}KB`);
 
           const result = await processVoiceMessage({
             tenantId,
@@ -98,24 +103,13 @@ export async function POST(req: Request) {
             audioFilename: `voice-${messageSid}.ogg`,
           });
 
-          // Send voice reply via Twilio REST API
-          const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
-          await fetch(twilioUrl, {
-            method: "POST",
-            headers: {
-              Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              From: `whatsapp:${env.TWILIO_PHONE_NUMBER}`,
-              To: from,
-              MediaUrl: result.audioUrl,
-            }),
-          });
+          console.log(`[WhatsApp] Voice pipeline complete, audioUrl=${result.audioUrl}`);
 
-          return emptyResponse();
+          // Reply with TwiML containing both text and audio media
+          return twimlMediaResponse(result.responseText.slice(0, 1500), result.audioUrl);
         } catch (err: any) {
           console.error(`[WhatsApp] Voice error: ${err?.message}`);
+          if (err?.stack) console.error(err.stack);
           return twimlResponse("Sorry, I couldn't process that voice message. Please try again or send a text.");
         }
       }
@@ -284,6 +278,18 @@ function twimlResponse(message: string) {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Message>${message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message>
+</Response>`;
+  return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
+}
+
+function twimlMediaResponse(message: string, mediaUrl: string) {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>
+    <Body>${esc(message)}</Body>
+    <Media>${esc(mediaUrl)}</Media>
+  </Message>
 </Response>`;
   return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
 }

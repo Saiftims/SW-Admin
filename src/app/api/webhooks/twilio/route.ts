@@ -71,11 +71,12 @@ export async function POST(req: Request) {
 
   if (numMedia > 0) {
     const mediaType0 = params.get("MediaContentType0") ?? "";
-    if (mediaType0.startsWith("audio/") || mediaType0 === "video/3gpp") {
+    const isAudio = mediaType0.startsWith("audio/") || mediaType0 === "video/3gpp";
+    if (isAudio) {
       const mediaUrl = params.get("MediaUrl0") ?? "";
+      console.log(`[SMS] Voice message from ${from}, type=${mediaType0}`);
       if (mediaUrl) {
         try {
-          console.log(`[SMS] Voice message from ${from} (${mediaType0})`);
           const audioRes = await fetch(mediaUrl, {
             headers: {
               Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
@@ -92,22 +93,7 @@ export async function POST(req: Request) {
             audioFilename: `voice-${messageSid}.amr`,
           });
 
-          // MMS reply with audio
-          const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
-          await fetch(twilioUrl, {
-            method: "POST",
-            headers: {
-              Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              From: env.TWILIO_PHONE_NUMBER,
-              To: from,
-              MediaUrl: result.audioUrl,
-            }),
-          });
-
-          return emptyResponse();
+          return twimlMediaResponse(result.responseText.slice(0, 1500), result.audioUrl);
         } catch (err: any) {
           console.error(`[SMS] Voice error: ${err?.message}`);
           return twimlResponse("Sorry, I couldn't process that voice message. Please try again or send a text.");
@@ -220,6 +206,18 @@ function twimlResponse(message: string) {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Message>${message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message>
+</Response>`;
+  return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
+}
+
+function twimlMediaResponse(message: string, mediaUrl: string) {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>
+    <Body>${esc(message)}</Body>
+    <Media>${esc(mediaUrl)}</Media>
+  </Message>
 </Response>`;
   return new Response(xml, { status: 200, headers: { "Content-Type": "text/xml" } });
 }
