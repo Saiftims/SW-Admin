@@ -91,6 +91,18 @@ export async function POST(req: Request) {
     }
   }
 
+  // Send a temporary "analyzing" message, then replace it with the real response
+  let analyzingTs: string | null = null;
+  try {
+    const typingRes = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, text: "🔍 _Analyzing crash photos..._" }),
+    });
+    const typingData = await typingRes.json();
+    if (typingData.ok) analyzingTs = typingData.ts;
+  } catch {}
+
   try {
     const response = await handleSlackMessage({
       tenantId,
@@ -99,7 +111,15 @@ export async function POST(req: Request) {
       imageBuffers: imageBuffers.length > 0 ? imageBuffers : undefined,
     });
 
-    // Convert Markdown to Slack mrkdwn: **bold** → *bold*, # headers → *headers*
+    // Delete the "analyzing" message
+    if (analyzingTs) {
+      fetch("https://slack.com/api/chat.delete", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, ts: analyzingTs }),
+      }).catch(() => {});
+    }
+
     const slackText = response.text
       .replace(/\*\*(.+?)\*\*/g, "*$1*")
       .replace(/^#{1,3}\s+(.+)$/gm, "*$1*")
@@ -117,6 +137,13 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error(`[Slack] Error: ${err?.message}`);
+    if (analyzingTs) {
+      fetch("https://slack.com/api/chat.delete", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, ts: analyzingTs }),
+      }).catch(() => {});
+    }
     await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
