@@ -16,7 +16,7 @@ function getClient(): Anthropic {
   return client;
 }
 
-async function getTenantContext(tenantId: string) {
+async function getTenantContext(tenantId: string, currentChannel?: string) {
   const [tenant, memDoc, recentMessages] = await Promise.all([
     prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -29,7 +29,7 @@ async function getTenantContext(tenantId: string) {
     prisma.conversationMessage.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take: 50,
     }),
   ]);
 
@@ -38,6 +38,7 @@ async function getTenantContext(tenantId: string) {
     memory: memDoc?.currentVersion?.contentMarkdown ?? "",
     firm: tenant?.firm,
     recentMessages: recentMessages.reverse(),
+    currentChannel,
   };
 }
 
@@ -54,7 +55,7 @@ export async function handleSlackMessage(params: {
   imageBuffers?: { buffer: Buffer; mimeType: string; filename: string }[];
 }): Promise<BotResponse> {
   const { tenantId, userMessage, channel, imageBuffers } = params;
-  const ctx = await getTenantContext(tenantId);
+  const ctx = await getTenantContext(tenantId, channel);
 
   // Run Silent Witness analysis if images present
   const analysisResults: NormalizedAnalysisResult[] = [];
@@ -103,8 +104,14 @@ STRICT RULES FOR YOUR RESPONSE:
 ${analysisTexts.join("\n\n---\n\n")}`);
   }
 
+  const currentChannelLabel = formatChannelLabel(channel ?? "default");
+  systemParts.push(`--- CROSS-CHANNEL MEMORY ---
+You have memory of this attorney's conversations across ALL channels (Slack, WhatsApp, SMS, Email).
+Messages from other channels are prefixed with [via Channel]. Use this context to give informed, continuous responses.
+The attorney may ask about a case on WhatsApp that they first discussed on Slack — you should remember it.`);
+
   systemParts.push(`--- FORMATTING ---
-You are responding in Slack. Use Slack mrkdwn formatting:
+You are responding via ${currentChannelLabel}. Use appropriate formatting:
 - Bold: *text* (single asterisks, NOT double)
 - Italic: _text_
 - Lists: use bullet points with •
@@ -114,12 +121,15 @@ You are responding in Slack. Use Slack mrkdwn formatting:
 
   const systemPrompt = systemParts.join("\n\n") || "You are a helpful crash analysis assistant.";
 
-  // Build messages from conversation history
+  // Build messages from conversation history (all channels for this tenant)
   const messages: Anthropic.MessageParam[] = [];
 
   for (const msg of ctx.recentMessages) {
     if (msg.role === "user" || msg.role === "assistant") {
-      messages.push({ role: msg.role, content: msg.content });
+      const channelLabel = formatChannelLabel(msg.channel);
+      const isCurrentChannel = msg.channel === ctx.currentChannel;
+      const prefix = isCurrentChannel ? "" : `[via ${channelLabel}] `;
+      messages.push({ role: msg.role, content: `${prefix}${msg.content}` });
     }
   }
 
@@ -203,4 +213,12 @@ You are responding in Slack. Use Slack mrkdwn formatting:
     console.error(`[Anthropic] Status: ${err?.status}, Type: ${err?.error?.error?.type}`);
     throw err;
   }
+}
+
+function formatChannelLabel(channel: string): string {
+  if (channel.startsWith("slack:")) return "Slack";
+  if (channel.startsWith("whatsapp:")) return "WhatsApp";
+  if (channel.startsWith("sms:")) return "SMS";
+  if (channel.startsWith("email:")) return "Email";
+  return channel;
 }
