@@ -54,9 +54,9 @@ export async function textToSpeech(
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_turbo_v2_5",
+        model_id: "eleven_flash_v2_5",
         voice_settings: {
-          stability: 0.7,
+          stability: 0.75,
           similarity_boost: 0.8,
         },
       }),
