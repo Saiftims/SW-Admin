@@ -93,7 +93,7 @@ export async function POST(req: Request) {
             audioFilename: `voice-${messageSid}.amr`,
           });
 
-          return twimlMediaResponse(result.responseText.slice(0, 1500), result.audioUrl);
+          return twimlMediaResponse("", result.audioUrl);
         } catch (err: any) {
           console.error(`[SMS] Voice error: ${err?.message}`);
           return twimlResponse("Sorry, I couldn't process that voice message. Please try again or send a text.");

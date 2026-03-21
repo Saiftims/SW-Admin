@@ -105,8 +105,7 @@ export async function POST(req: Request) {
 
           console.log(`[WhatsApp] Voice pipeline complete, audioUrl=${result.audioUrl}`);
 
-          // Reply with TwiML containing both text and audio media
-          return twimlMediaResponse(result.responseText.slice(0, 1500), result.audioUrl);
+          return twimlMediaResponse("", result.audioUrl);
         } catch (err: any) {
           console.error(`[WhatsApp] Voice error: ${err?.message}`);
           if (err?.stack) console.error(err.stack);
