@@ -101,11 +101,11 @@ export async function processVoiceMessage(opts: {
  * so the TTS engine pronounces them correctly.
  */
 function normalizeTtsText(text: string): string {
-  return text
-    // Delta-V → "change in speed" (user requested)
-    .replace(/Delta[\s-]?V/gi, "change in speed")
-    .replace(/ΔV/g, "change in speed")
-    // Units — expand before TTS sees them
+  let out = text
+    // Delta-V → "delta vee" (standard verbal pronunciation in accident reconstruction)
+    .replace(/Delta[\s-]?V/gi, "delta vee")
+    .replace(/ΔV/g, "delta vee")
+    // Units — spell out fully so TTS reads them naturally
     .replace(/(\d+)\s*mph/gi, "$1 miles per hour")
     .replace(/(\d+)\s*km\/h/gi, "$1 kilometers per hour")
     .replace(/(\d+)\s*kph/gi, "$1 kilometers per hour")
@@ -115,16 +115,30 @@ function normalizeTtsText(text: string): string {
     .replace(/(\d+)\s*kg(?=\s|$)/gi, "$1 kilograms")
     .replace(/(\d+)\s*kN/g, "$1 kilonewtons")
     .replace(/(\d+)\s*ms(?=\s|$)/gi, "$1 milliseconds")
-    // Acronyms — spell out so TTS pronounces letter-by-letter
-    .replace(/\bAIS\b/g, "A.I.S.")
-    .replace(/\bPDOF\b/g, "P.D.O.F.")
-    .replace(/\bCDR\b/g, "C.D.R.")
-    .replace(/\bEDR\b/g, "E.D.R.")
-    // Ranges — make spoken-friendly
+    // Acronyms — spell out letter-by-letter
+    .replace(/\bAIS\b/g, "A I S")
+    .replace(/\bPDOF\b/g, "P D O F")
+    .replace(/\bCDR\b/g, "C D R")
+    .replace(/\bEDR\b/g, "E D R")
+    // Ranges — spoken form
     .replace(/(\d+)\s*[–—-]\s*(\d+)/g, "$1 to $2")
-    // Percentage — ensure "percent" not "per cent"
+    // Percentage
     .replace(/(\d+(?:\.\d+)?)\s*%/g, "$1 percent")
-    // Clean up multiple spaces
-    .replace(/  +/g, " ")
+    // Strip markdown artifacts that survived earlier cleaning
+    .replace(/[*_#`]/g, "")
+    // Collapse bullet/list line breaks into flowing sentences
+    .replace(/\n+/g, ". ")
+    // Remove stray colons at end of phrases (they cause pauses)
+    .replace(/:\s*\./g, ".")
+    .replace(/:\s*$/gm, ".")
+    // Collapse repeated punctuation and whitespace
+    .replace(/\.{2,}/g, ".")
+    .replace(/\.\s*\./g, ".")
+    .replace(/\s{2,}/g, " ")
     .trim();
+
+  // Ensure the text ends with a period for natural sentence-final intonation
+  if (out && !/[.!?]$/.test(out)) out += ".";
+
+  return out;
 }
