@@ -85,6 +85,7 @@ enum JobEventType {
   ANALYSIS_NORMALIZED
   MESSAGE_RENDERED
   OUTBOUND_SENT
+  AUDIO_GENERATED
 }
 
 model Tenant {
@@ -95,6 +96,7 @@ model Tenant {
   onboardingStatus           TenantOnboardingStatus       @default(PENDING)
   defaultAnalysisStrategy   String                       @default("analyze_all_and_aggregate")
   personality                String?
+  voiceId                    String?
 
   firm                        Firm?
   subscriptions              Subscription[]

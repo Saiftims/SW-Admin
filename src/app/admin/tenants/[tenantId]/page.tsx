@@ -254,9 +254,9 @@ export default function TenantDetailPage({ params }: { params: Promise<{ tenantI
           </Link>
 
           {/* Bot config */}
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr", marginBottom: 12 }}>
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 12 }}>
             <Link href={`/admin/tenants/${tenantId}/personality`} className="card" style={{ textDecoration: "none" }}>
-              <div style={{ fontWeight: 750, marginBottom: 6 }}>🎭 Bot Personality</div>
+              <div style={{ fontWeight: 750, marginBottom: 6 }}>Bot Personality</div>
               <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
                 Define the bot's tone, style, and behavior. Applied to every Slack, SMS, and email response.
               </div>
@@ -264,11 +264,19 @@ export default function TenantDetailPage({ params }: { params: Promise<{ tenantI
             </Link>
 
             <Link href={`/admin/tenants/${tenantId}/memory`} className="card" style={{ textDecoration: "none" }}>
-              <div style={{ fontWeight: 750, marginBottom: 6 }}>🧠 Bot Memory</div>
+              <div style={{ fontWeight: 750, marginBottom: 6 }}>Bot Memory</div>
               <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
                 Knowledge base, conversation history, and firm context. The bot remembers past interactions.
               </div>
               <div style={{ marginTop: 10, color: "var(--brand)", fontSize: 13 }}>View memory →</div>
+            </Link>
+
+            <Link href={`/admin/tenants/${tenantId}/voice`} className="card" style={{ textDecoration: "none" }}>
+              <div style={{ fontWeight: 750, marginBottom: 6 }}>Voice Settings</div>
+              <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
+                Choose the voice for audio replies on WhatsApp, SMS, and Slack.
+              </div>
+              <div style={{ marginTop: 10, color: "var(--brand)", fontSize: 13 }}>Select voice →</div>
             </Link>
           </div>
 

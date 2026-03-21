@@ -34,6 +34,8 @@ const EnvSchema = z.object({
   TWILIO_PHONE_NUMBER: z.string().default(""),
 
   APP_BASE_URL: z.string().default("http://localhost:3000"),
+
+  ELEVENLABS_API_KEY: z.string().default(""),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

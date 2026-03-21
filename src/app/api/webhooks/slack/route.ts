@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { handleSlackMessage } from "@/lib/services/anthropic-bot";
+import { processVoiceMessage } from "@/lib/services/voice-handler";
 
 export const maxDuration = 60;
 
@@ -72,7 +73,94 @@ export async function POST(req: Request) {
 
   console.log(`[Slack] Processing: "${userMessage.slice(0, 50)}" (${files.length} files) [${dedupeKey}]`);
 
-  // Download images
+  // ─── Check for audio files (voice clips) ─────────────────────────
+
+  const audioFile = files.find((f: any) =>
+    f.mimetype?.startsWith("audio/") || f.mimetype === "video/webm" || f.mimetype === "video/mp4"
+  );
+
+  if (audioFile) {
+    const url = audioFile.url_private_download ?? audioFile.url_private;
+    if (url) {
+      let thinkingTs: string | null = null;
+      try {
+        // Post "listening" indicator
+        const thinkingRes = await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ channel, text: "_Listening to your voice message..._" }),
+        });
+        const thinkingData = await thinkingRes.json();
+        if (thinkingData.ok) thinkingTs = thinkingData.ts;
+
+        const audioRes = await fetch(url, {
+          headers: { Authorization: `Bearer ${botToken}` },
+        });
+        if (!audioRes.ok) throw new Error(`Audio download failed: ${audioRes.status}`);
+        const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+
+        const result = await processVoiceMessage({
+          tenantId,
+          channel: `slack:${channel}`,
+          audioBuffer,
+          audioMimeType: audioFile.mimetype,
+          audioFilename: audioFile.name ?? "voice.webm",
+        });
+
+        // Delete thinking message
+        if (thinkingTs) {
+          fetch("https://slack.com/api/chat.delete", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ channel, ts: thinkingTs }),
+          }).catch(() => {});
+        }
+
+        // Upload audio response to Slack
+        const formData = new FormData();
+        formData.append("channels", channel);
+        formData.append("initial_comment", `_Voice reply (transcript: "${result.transcript.slice(0, 100)}${result.transcript.length > 100 ? "..." : ""}")_`);
+        formData.append("filename", "response.mp3");
+        formData.append("file", new File([await fetch(result.audioUrl).then(r => r.arrayBuffer())], "response.mp3", { type: "audio/mpeg" }));
+
+        await fetch("https://slack.com/api/files.upload", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${botToken}` },
+          body: formData,
+        });
+
+        // Also send text version as a fallback
+        const slackText = result.responseText
+          .replace(/\*\*(.+?)\*\*/g, "*$1*")
+          .replace(/^#{1,3}\s+(.+)$/gm, "*$1*")
+          .replace(/^- /gm, "• ");
+
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ channel, text: slackText }),
+        });
+      } catch (err: any) {
+        console.error(`[Slack] Voice error: ${err?.message}`);
+        if (thinkingTs) {
+          fetch("https://slack.com/api/chat.delete", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ channel, ts: thinkingTs }),
+          }).catch(() => {});
+        }
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ channel, text: "Sorry, I couldn't process that voice message. Please try again or send a text." }),
+        });
+      }
+      return NextResponse.json({ ok: true });
+    }
+  }
+
+  // ─── Download images ────────────────────────────────────────────────
+
   const imageBuffers: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (const file of files) {
     if (!file.mimetype?.startsWith("image/")) continue;

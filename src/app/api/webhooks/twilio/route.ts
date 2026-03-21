@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { analyzeImages, buildTemplatePlaceholders, type NormalizedAnalysisResult } from "@/lib/services/silent-witness-client";
 import { renderTemplate, getDefaultTemplate } from "@/lib/services/email-template";
 import { handleSlackMessage } from "@/lib/services/anthropic-bot";
+import { processVoiceMessage } from "@/lib/services/voice-handler";
 
 export const maxDuration = 60;
 
@@ -63,6 +64,55 @@ export async function POST(req: Request) {
     } catch (err: any) {
       console.error(`[SMS] AI error: ${err?.message}`);
       return twimlResponse("Sorry, I encountered an error. Please try again.");
+    }
+  }
+
+  // ─── Voice message: STT → AI → TTS ──────────────────────────────
+
+  if (numMedia > 0) {
+    const mediaType0 = params.get("MediaContentType0") ?? "";
+    if (mediaType0.startsWith("audio/") || mediaType0 === "video/3gpp") {
+      const mediaUrl = params.get("MediaUrl0") ?? "";
+      if (mediaUrl) {
+        try {
+          console.log(`[SMS] Voice message from ${from} (${mediaType0})`);
+          const audioRes = await fetch(mediaUrl, {
+            headers: {
+              Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
+            },
+          });
+          if (!audioRes.ok) throw new Error(`Download failed: ${audioRes.status}`);
+          const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+
+          const result = await processVoiceMessage({
+            tenantId,
+            channel: `sms:${from}`,
+            audioBuffer,
+            audioMimeType: mediaType0,
+            audioFilename: `voice-${messageSid}.amr`,
+          });
+
+          // MMS reply with audio
+          const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
+          await fetch(twilioUrl, {
+            method: "POST",
+            headers: {
+              Authorization: "Basic " + Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              From: env.TWILIO_PHONE_NUMBER,
+              To: from,
+              MediaUrl: result.audioUrl,
+            }),
+          });
+
+          return emptyResponse();
+        } catch (err: any) {
+          console.error(`[SMS] Voice error: ${err?.message}`);
+          return twimlResponse("Sorry, I couldn't process that voice message. Please try again or send a text.");
+        }
+      }
     }
   }
 
