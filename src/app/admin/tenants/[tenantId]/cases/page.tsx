@@ -127,30 +127,53 @@ function CaseCard({ r }: { r: Report }) {
       {expanded ? (
         <div style={{ borderTop: "1px solid var(--border)", padding: 16 }}>
           {r.hasImages && r.imageCount > 0 ? (
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
               {Array.from({ length: r.imageCount }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 160,
-                    height: 120,
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    background: "#1a1a2e",
-                    border: "1px solid var(--border)",
-                    cursor: "pointer",
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.open(`/api/reports/${r.id}/images/${i}`, "_blank");
-                  }}
-                >
-                  <img
-                    src={`/api/reports/${r.id}/images/${i}`}
-                    alt={`Crash photo ${i + 1}`}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    loading="lazy"
-                  />
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div
+                    style={{
+                      width: 180,
+                      height: 135,
+                      borderRadius: 8,
+                      overflow: "hidden",
+                      background: "#1a1a2e",
+                      border: "1px solid var(--border)",
+                      cursor: "pointer",
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      window.open(`/api/reports/${r.id}/images/${i}`, "_blank");
+                    }}
+                  >
+                    <img
+                      src={`/api/reports/${r.id}/images/${i}`}
+                      alt={`Crash photo ${i + 1}`}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      loading="lazy"
+                    />
+                  </div>
+                  <a
+                    href={`/api/reports/${r.id}/images/${i}?download=1`}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--brand)",
+                      background: "rgba(99,102,241,0.08)",
+                      border: "1px solid rgba(99,102,241,0.2)",
+                      textDecoration: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 13 }}>&#8681;</span> Download original
+                  </a>
                 </div>
               ))}
             </div>

@@ -1,11 +1,13 @@
 import { prisma } from "@/lib/db";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ reportId: string; index: string }> }
 ) {
   const { reportId, index } = await context.params;
   const idx = parseInt(index, 10);
+  const url = new URL(req.url);
+  const download = url.searchParams.get("download") === "1";
 
   const report = await prisma.analysisReport.findUnique({
     where: { id: reportId },
@@ -22,12 +24,17 @@ export async function GET(
   }
 
   const buffer = Buffer.from(img.base64, "base64");
-  return new Response(buffer, {
-    status: 200,
-    headers: {
-      "Content-Type": img.mimeType ?? "image/jpeg",
-      "Content-Length": buffer.length.toString(),
-      "Cache-Control": "public, max-age=31536000, immutable",
-    },
-  });
+  const filename = img.filename ?? `crash-photo-${idx + 1}.jpg`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": img.mimeType ?? "image/jpeg",
+    "Content-Length": buffer.length.toString(),
+    "Cache-Control": "public, max-age=31536000, immutable",
+  };
+
+  if (download) {
+    headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+  }
+
+  return new Response(buffer, { status: 200, headers });
 }
