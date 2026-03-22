@@ -164,21 +164,30 @@ export async function POST(req: Request) {
   console.log(`[WhatsApp] Stored ${imageBuffers.length} image(s). Waiting ${BATCH_WINDOW_MS}ms for more...`);
   await new Promise((r) => setTimeout(r, BATCH_WINDOW_MS));
 
-  // Check if we're the last in the batch
+  // Atomic claim: read then immediately delete. First handler to delete wins.
   const allBatchEntries = await prisma.jobEventHistory.findMany({
     where: { correlationId: batchKey, entityType: "whatsapp_batch_image" },
     orderBy: { createdAt: "asc" },
   });
 
-  if (allBatchEntries.length === 0) return emptyResponse();
-
-  const newestTimestamp = (allBatchEntries[allBatchEntries.length - 1].detailsJson as any)?.timestamp ?? 0;
-  if (Date.now() - newestTimestamp < BATCH_WINDOW_MS - 1000) {
-    console.log(`[WhatsApp] Newer photos in batch, deferring`);
+  if (allBatchEntries.length === 0) {
+    console.log(`[WhatsApp] Batch already claimed by another handler, exiting`);
     return emptyResponse();
   }
 
-  // Collect all batch images
+  // Delete immediately to prevent other handlers from processing
+  const deleted = await prisma.jobEventHistory.deleteMany({
+    where: { correlationId: batchKey, entityType: "whatsapp_batch_image" },
+  });
+
+  if (deleted.count === 0) {
+    console.log(`[WhatsApp] Lost race to claim batch, exiting`);
+    return emptyResponse();
+  }
+
+  console.log(`[WhatsApp] Claimed batch: ${deleted.count} entries`);
+
+  // Collect all batch images from the entries we read
   const batchImages: { buffer: Buffer; mimeType: string; filename: string }[] = [];
   for (const entry of allBatchEntries) {
     const d = entry.detailsJson as any;
@@ -190,11 +199,6 @@ export async function POST(req: Request) {
       });
     }
   }
-
-  // Clean up
-  await prisma.jobEventHistory.deleteMany({
-    where: { correlationId: batchKey, entityType: "whatsapp_batch_image" },
-  });
 
   if (batchImages.length === 0) return emptyResponse();
 
