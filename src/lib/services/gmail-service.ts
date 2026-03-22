@@ -169,7 +169,7 @@ export async function pollAndProcessEmails(): Promise<number> {
 
           // Store in conversation memory
           if (firm?.tenant?.id) {
-            const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
+            const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${((a.probabilityMin ?? a.probability)*100).toFixed(1)}%`).join(", ")}`;
             await prisma.conversationMessage.createMany({
               data: [
                 { tenantId: firm.tenant.id, channel: `email:${from}`, role: "user", content: `(sent ${attachments.length} crash photo(s) via email: "${subject}")`, hasImages: true },

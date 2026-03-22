@@ -208,7 +208,7 @@ export function formatAnalysisForSlack(r: NormalizedAnalysisResult): string {
       const pctStr = pctMin === pctMax
         ? `${pctMin.toFixed(1)}%`.padStart(7)
         : `${pctMin.toFixed(1)}-${pctMax.toFixed(1)}%`.padStart(13);
-      const barLen = Math.round(a.probability * 20);
+      const barLen = Math.round((a.probabilityMin ?? a.probability) * 20);
       const bar = "▓".repeat(barLen) + "░".repeat(20 - barLen);
       lines.push(`${level} ${label}  ${pctStr}  ${bar}  ${a.description}`);
     }
@@ -254,7 +254,7 @@ export function buildSlackBlocks(r: NormalizedAnalysisResult): any[] {
       const pctStr = pctMin === pctMax
         ? `${pctMin.toFixed(1)}%`.padStart(7)
         : `${pctMin.toFixed(1)}-${pctMax.toFixed(1)}%`.padStart(14);
-      const barLen = Math.round(a.probability * 15);
+      const barLen = Math.round((a.probabilityMin ?? a.probability) * 15);
       const bar = "▓".repeat(barLen) + "░".repeat(15 - barLen);
       return `AIS ${a.level}  │ ${a.label.padEnd(10)} │ ${pctStr} ${bar} │ ${a.description}`;
     });
@@ -292,7 +292,7 @@ export function buildTemplatePlaceholders(
     const pctMin = (a.probabilityMin ?? a.probability) * 100;
     const pctMax = (a.probabilityMax ?? a.probability) * 100;
     const pctDisplay = pctMin === pctMax ? `${pctMin.toFixed(1)}%` : `${pctMin.toFixed(1)}%`;
-    const barWidth = Math.max(2, Math.round(a.probability * 100));
+    const barWidth = Math.max(2, Math.round((a.probabilityMin ?? a.probability) * 100));
     const color = barColors[a.level] ?? "#6366f1";
 
     return `<div class="ais-row">

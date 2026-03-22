@@ -140,7 +140,7 @@ export async function POST(req: Request) {
 
   // Store in conversation memory
   if (tenantId) {
-    const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${(a.probability*100).toFixed(1)}%`).join(", ")}`;
+    const analysisText = `Delta-V: ${outcome.result.deltaV?.min}-${outcome.result.deltaV?.max} ${outcome.result.deltaV?.unit}, Impact: ${outcome.result.impact?.pdofDirection}, Type: ${outcome.result.impact?.collisionType}, Confidence: ${outcome.result.confidence}, AIS: ${outcome.result.aisDistribution.map(a => `${a.label} ${((a.probabilityMin ?? a.probability)*100).toFixed(1)}%`).join(", ")}`;
 
     await prisma.conversationMessage.createMany({
       data: [
@@ -194,7 +194,7 @@ function buildSummary(r: NormalizedAnalysisResult, url: string): string {
   if (r.aisDistribution.length > 0) {
     lines.push(`\nAIS Injury Probability:`);
     for (const a of r.aisDistribution) {
-      lines.push(`  AIS ${a.level} ${a.label}: ${(a.probability * 100).toFixed(1)}%`);
+      lines.push(`  AIS ${a.level} ${a.label}: ${((a.probabilityMin ?? a.probability) * 100).toFixed(1)}%`);
     }
   }
 
