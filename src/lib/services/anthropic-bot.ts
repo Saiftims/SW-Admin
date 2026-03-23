@@ -123,9 +123,9 @@ ${analysisTexts.join("\n\n---\n\n")}`);
 
   const currentChannelLabel = formatChannelLabel(channel ?? "default");
   systemParts.push(`--- CROSS-CHANNEL MEMORY ---
-You have memory of this attorney's conversations across ALL channels (Slack, WhatsApp, SMS, Email).
-Messages from other channels are prefixed with [via Channel]. Use this context to give informed, continuous responses.
-The attorney may ask about a case on WhatsApp that they first discussed on Slack — you should remember it.`);
+You have memory of conversations across Slack, WhatsApp, SMS, and Email.
+In the conversation history, messages from other channels have a [via Channel] prefix. This is internal metadata for YOUR context only.
+NEVER include [via ...] tags in your responses. NEVER start your reply with [via WhatsApp] or [via Slack] or any channel tag. Just respond normally.`);
 
   systemParts.push(`--- FORMATTING ---
 Responding via ${currentChannelLabel}. Bold: *text*, Italic: _text_, Lists: bullet •. No Markdown headers. No emojis. Keep it short.`);
