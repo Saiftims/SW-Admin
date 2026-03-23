@@ -30,8 +30,17 @@ const sourceColors: Record<string, string> = {
   EMAIL: "#3b82f6",
 };
 
-function CaseCard({ r }: { r: Report }) {
+function CaseCard({
+  r,
+  tenantId,
+  onDeleted,
+}: {
+  r: Report;
+  tenantId: string;
+  onDeleted: (id: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const result = r.resultJson as any;
   const deltaV = result?.deltaV;
   const sender = r.senderPhone || r.senderEmail || r.sourceRef || "Unknown";
@@ -117,9 +126,46 @@ function CaseCard({ r }: { r: Report }) {
           </div>
         </div>
 
-        {/* Arrow */}
-        <div style={{ color: "var(--muted)", fontSize: 18, flexShrink: 0, alignSelf: "center", transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "rotate(0)" }}>
-          &#9656;
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (
+                !confirm(
+                  "Delete this case file? The report and stored photos will be removed permanently."
+                )
+              )
+                return;
+              setDeleting(true);
+              fetch(`/api/tenants/${tenantId}/cases/${r.id}`, { method: "DELETE" })
+                .then((res) => {
+                  if (!res.ok) return res.json().then((d) => Promise.reject(new Error(d.error ?? res.statusText)));
+                  onDeleted(r.id);
+                })
+                .catch((err) => {
+                  alert(err?.message ?? "Failed to delete");
+                })
+                .finally(() => setDeleting(false));
+            }}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              border: "1px solid rgba(239,68,68,0.35)",
+              background: "rgba(239,68,68,0.08)",
+              color: "#f87171",
+              cursor: deleting ? "wait" : "pointer",
+              opacity: deleting ? 0.6 : 1,
+            }}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+          <div style={{ color: "var(--muted)", fontSize: 18, transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "rotate(0)" }}>
+            &#9656;
+          </div>
         </div>
       </div>
 
@@ -205,6 +251,10 @@ export default function CasesPage({ params }: { params: Promise<{ tenantId: stri
       .then((d) => { setReports(d.reports ?? []); setLoading(false); });
   }, [tenantId]);
 
+  const removeReport = (id: string) => {
+    setReports((prev) => prev.filter((x) => x.id !== id));
+  };
+
   return (
     <div className="container">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -229,7 +279,9 @@ export default function CasesPage({ params }: { params: Promise<{ tenantId: stri
 
       {!loading && reports.length > 0 ? (
         <div style={{ display: "grid", gap: 10 }}>
-          {reports.map((r) => <CaseCard key={r.id} r={r} />)}
+          {reports.map((r) => (
+            <CaseCard key={r.id} r={r} tenantId={tenantId} onDeleted={removeReport} />
+          ))}
         </div>
       ) : null}
     </div>
