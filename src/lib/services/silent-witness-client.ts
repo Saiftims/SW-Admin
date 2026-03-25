@@ -17,7 +17,7 @@ export type NormalizedAnalysisResult = {
     pdofDegrees: number | null;
     pdofDirection: string | null;
     peakAccelerationGs: number | null;
-    crashPulseMs: { min: number; max: number } | null;
+    crashPulseMs: number | null;
     impactType: string | null;
     collisionType: string | null;
   } | null;
@@ -50,9 +50,11 @@ function normalize(raw: any): NormalizedAnalysisResult {
         pdofDegrees: raw.impact.pdof_degrees ?? null,
         pdofDirection: raw.impact.pdof_direction ?? null,
         peakAccelerationGs: raw.impact.peak_acceleration_gs ?? null,
-        crashPulseMs: raw.impact.crash_pulse_ms
-          ? { min: raw.impact.crash_pulse_ms.min, max: raw.impact.crash_pulse_ms.max }
-          : null,
+        crashPulseMs: typeof raw.impact.crash_pulse_ms === "number"
+          ? raw.impact.crash_pulse_ms
+          : typeof raw.impact.crash_pulse_ms === "object" && raw.impact.crash_pulse_ms
+            ? (raw.impact.crash_pulse_ms.min ?? raw.impact.crash_pulse_ms.max ?? null)
+            : null,
         impactType: raw.impact.impact_type ?? null,
         collisionType: raw.impact.collision_type ?? null,
       }
@@ -189,8 +191,8 @@ export function formatAnalysisForSlack(r: NormalizedAnalysisResult): string {
       lines.push(`*Impact Type:* ${r.impact.impactType}`);
     if (r.impact.peakAccelerationGs != null)
       lines.push(`*Peak Acceleration:* ${r.impact.peakAccelerationGs} g`);
-    if (r.impact.crashPulseMs)
-      lines.push(`*Crash Pulse:* ${r.impact.crashPulseMs.min} – ${r.impact.crashPulseMs.max} ms`);
+    if (r.impact.crashPulseMs != null)
+      lines.push(`*Crash Pulse:* ${r.impact.crashPulseMs} ms`);
   }
 
   if (r.confidence) lines.push(`*Confidence:* ${r.confidence}`);
@@ -237,7 +239,7 @@ export function buildSlackBlocks(r: NormalizedAnalysisResult): any[] {
   if (r.impact?.collisionType) fields.push({ type: "mrkdwn", text: `*Collision Type*\n${r.impact.collisionType}` });
   if (r.impact?.peakAccelerationGs != null) fields.push({ type: "mrkdwn", text: `*Peak Acceleration*\n${r.impact.peakAccelerationGs} g` });
   if (r.impact?.impactType) fields.push({ type: "mrkdwn", text: `*Impact Type*\n${r.impact.impactType}` });
-  if (r.impact?.crashPulseMs) fields.push({ type: "mrkdwn", text: `*Crash Pulse*\n${r.impact.crashPulseMs.min} – ${r.impact.crashPulseMs.max} ms` });
+  if (r.impact?.crashPulseMs != null) fields.push({ type: "mrkdwn", text: `*Crash Pulse*\n${r.impact.crashPulseMs} ms` });
 
   if (fields.length > 0) {
     // Slack limits fields to 10, and pairs them in 2 columns
@@ -315,8 +317,8 @@ export function buildTemplatePlaceholders(
     ? `${r.impact.peakAccelerationGs} g`
     : "—";
 
-  const pulseDisplay = r.impact?.crashPulseMs && (r.impact.crashPulseMs.min > 0 || r.impact.crashPulseMs.max > 0)
-    ? `${r.impact.crashPulseMs.min}–${r.impact.crashPulseMs.max} ms`
+  const pulseDisplay = r.impact?.crashPulseMs != null && r.impact.crashPulseMs > 0
+    ? `${r.impact.crashPulseMs} ms`
     : "—";
 
   const confidenceClass = r.confidence === "high" ? "" : "low";
@@ -335,8 +337,8 @@ export function buildTemplatePlaceholders(
     pdof_degrees: r.impact?.pdofDegrees?.toString() ?? "N/A",
     peak_acceleration_gs: r.impact?.peakAccelerationGs?.toString() ?? "N/A",
     peak_acceleration_gs_display: gForceDisplay,
-    crash_pulse_min_ms: r.impact?.crashPulseMs?.min?.toString() ?? "N/A",
-    crash_pulse_max_ms: r.impact?.crashPulseMs?.max?.toString() ?? "N/A",
+    crash_pulse_min_ms: r.impact?.crashPulseMs?.toString() ?? "N/A",
+    crash_pulse_max_ms: r.impact?.crashPulseMs?.toString() ?? "N/A",
     crash_pulse_display: pulseDisplay,
     confidence: r.confidence ?? "N/A",
     confidence_class: confidenceClass,

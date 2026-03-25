@@ -12,7 +12,7 @@ const MOCK_RESULT = {
     pdofDegrees: 12.4,
     pdofDirection: "Front Right",
     peakAccelerationGs: 12.4,
-    crashPulseMs: { min: 84, max: 124 },
+    crashPulseMs: 104,
     impactType: "frontal-center",
     collisionType: "rear-end",
   },
