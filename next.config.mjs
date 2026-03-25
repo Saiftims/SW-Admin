@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  serverExternalPackages: ["@aws-sdk/client-s3", "bullmq"]
+  serverExternalPackages: ["@aws-sdk/client-s3", "bullmq", "sharp"]
 };
 
 export default nextConfig;

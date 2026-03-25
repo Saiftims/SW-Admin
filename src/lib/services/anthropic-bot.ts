@@ -7,6 +7,7 @@ import {
   buildSlackBlocks,
   type NormalizedAnalysisResult,
 } from "@/lib/services/silent-witness-client";
+import { compressForAnthropic } from "@/lib/services/image-utils";
 
 let client: Anthropic | null = null;
 
@@ -152,13 +153,14 @@ Responding via ${currentChannelLabel}. Bold: *text*, Italic: _text_, Lists: bull
 
   if (imageBuffers && imageBuffers.length > 0) {
     for (const img of imageBuffers) {
-      const mediaType = img.mimeType as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+      const compressed = await compressForAnthropic(img.buffer, img.mimeType);
+      const mediaType = compressed.mimeType as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
       userContent.push({
         type: "image",
         source: {
           type: "base64",
           media_type: mediaType,
-          data: img.buffer.toString("base64"),
+          data: compressed.buffer.toString("base64"),
         },
       });
     }
